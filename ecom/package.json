@@ -1,0 +1,16 @@
+{
+  "name": "shopverse",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ShopVerse e-commerce app (React + Express). Caching & scaling are planned for a later phase.",
+  "scripts": {
+    "install:all": "npm install --prefix server && npm install --prefix client",
+    "dev": "concurrently -n api,web -c blue,magenta \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "start": "npm start --prefix server",
+    "build": "npm run build --prefix client",
+    "generate:images": "node scripts/generate-product-images.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.1"
+  }
+}
