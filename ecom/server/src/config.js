@@ -11,7 +11,7 @@ export const NODE_ENV = process.env.NODE_ENV || 'development';
 export const PORT = Number(process.env.PORT || 3001);
 // Bound to localhost by default: in development the Vite dev server proxies
 // /api/* here, so the browser never talks to the API directly.
-export const HOST = process.env.HOST || '127.0.0.1';
+export const HOST = process.env.HOST || 'localhost';
 
 // Phase 2 (caching & scaling) — exposed now so the cache/DB layers can read
 // them as soon as they're implemented.
