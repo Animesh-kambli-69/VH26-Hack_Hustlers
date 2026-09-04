@@ -1,6 +1,8 @@
 import { getProduct, decrementStock, restock } from './productService.js';
 import { fileDb } from '../db/fileDb.js';
 import { findPromoCode } from '../data/promoCodes.js';
+import { cacheManager } from './cache/manager.js';
+import { metaFor } from './cache/costModel.js';
 
 // ---------------------------------------------------------------------------
 // Order business rules: validation, pricing (server-side), stock reservation,
@@ -223,10 +225,14 @@ export function createOrder({ customerId, customer, items, shippingMethod, promo
     createdAt,
   };
 
-  return fileDb.push(order);
+  const created = fileDb.push(order);
+  // New order → this customer's history changed (stock was already
+  // invalidated by productService.decrementStock).
+  if (created.customerId) cacheManager.invalidateKey(`orders:customer:${created.customerId}`);
+  return created;
 }
 
-export function listOrders(customerId) {
+function computeListOrders(customerId) {
   return fileDb
     .all()
     .filter((o) => o.customerId === customerId)
@@ -234,8 +240,37 @@ export function listOrders(customerId) {
     .map(withDefaults);
 }
 
+// Order history is read repeatedly on the orders page and costs a fileDb
+// read + sort per request — worth a short-TTL cache, invalidated on any write.
+export function listOrders(customerId) {
+  const key = `orders:customer:${customerId}`;
+  const hit = cacheManager.get(key);
+  if (hit !== undefined) return hit;
+
+  const value = computeListOrders(customerId);
+  cacheManager.set(key, value, {
+    ...metaFor('ORDER'),
+    sizeMB: Math.min(1.5, 0.3 + value.length * 0.05),
+  });
+  return value;
+}
+
 export function getOrder(id) {
-  return withDefaults(fileDb.get(String(id)));
+  const key = `orders:detail:${String(id)}`;
+  const hit = cacheManager.get(key);
+  if (hit !== undefined) return hit;
+
+  const order = withDefaults(fileDb.get(String(id)));
+  if (order) cacheManager.set(key, order, { ...metaFor('ORDER'), sizeMB: 0.15, costLatency: 25 });
+  return order;
+}
+
+// Any write to an order must evict that customer's cached history + the
+// order detail so the next read reflects the new state.
+function invalidateOrderCaches(order) {
+  if (!order) return;
+  if (order.customerId) cacheManager.invalidateKey(`orders:customer:${order.customerId}`);
+  if (order.id) cacheManager.invalidateKey(`orders:detail:${order.id}`);
 }
 
 // Terminal transition — restores the reserved stock and marks the order
@@ -253,6 +288,7 @@ export function cancelOrder(id) {
     return order;
   });
   if (!updated) throw httpError(404, 'Order not found');
+  invalidateOrderCaches(updated);
   return withDefaults(updated);
 }
 
@@ -271,5 +307,6 @@ export function advanceOrderStatus(id) {
     return order;
   });
   if (!updated) throw httpError(404, 'Order not found');
+  invalidateOrderCaches(updated);
   return withDefaults(updated);
 }

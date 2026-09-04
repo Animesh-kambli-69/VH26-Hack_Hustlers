@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1260" height="1010" viewBox="0 0 1260 1010">
+  <title>ShopVerse Phase 2 — Adaptive, Application-Aware Cache System</title>
+  <desc>Architecture diagram: React client, Express API with an adaptive utility-scored cache engine wrapping services, data layer, control plane, SSE observability and Redis-readiness notes.</desc>
+
+  <defs>
+    <marker id="mBlue" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L9,3 L0,6 Z" fill="#38bdf8"/>
+    </marker>
+    <marker id="mGreen" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L9,3 L0,6 Z" fill="#34d399"/>
+    </marker>
+    <marker id="mRed" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L9,3 L0,6 Z" fill="#f87171"/>
+    </marker>
+  </defs>
+
+  <!-- background -->
+  <rect x="0" y="0" width="1260" height="1010" fill="#0f172a"/>
+
+  <!-- ===================== header ===================== -->
+  <text x="30" y="44" font-family="Segoe UI, Arial, sans-serif" font-size="21" font-weight="700" fill="#f1f5f9">ShopVerse Phase 2 — Adaptive, Application-Aware Cache System</text>
+  <text x="30" y="68" font-family="Segoe UI, Arial, sans-serif" font-size="12.5" fill="#7c8ba1">Utility-scored eviction engine wrapping server services · shadow-policy comparison · cost advisor · SSE observability — architecture of the code in <tspan font-family="Consolas, Menlo, monospace" fill="#94a3b8">ecom/</tspan></text>
+
+  <!-- ===================== CLIENT ===================== -->
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <rect x="30" y="88" width="1180" height="100" rx="12" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5"/>
+    <text x="50" y="113" font-size="13.5" font-weight="700" fill="#38bdf8">CLIENT — React 18 (JSX) via Vite dev server · /api/* proxy</text>
+
+    <rect x="50" y="124" width="210" height="40" rx="6" fill="#111c33" stroke="#334155"/>
+    <text x="155" y="148" font-size="12" text-anchor="middle" fill="#cbd5e1">Home · catalog list</text>
+
+    <rect x="272" y="124" width="230" height="40" rx="6" fill="#111c33" stroke="#334155"/>
+    <text x="387" y="148" font-size="12" text-anchor="middle" fill="#cbd5e1">Product · detail + related</text>
+
+    <rect x="514" y="124" width="190" height="40" rx="6" fill="#111c33" stroke="#334155"/>
+    <text x="609" y="148" font-size="12" text-anchor="middle" fill="#cbd5e1">Cart → Checkout</text>
+
+    <rect x="716" y="124" width="130" height="40" rx="6" fill="#111c33" stroke="#334155"/>
+    <text x="781" y="148" font-size="12" text-anchor="middle" fill="#cbd5e1">Orders</text>
+
+    <rect x="858" y="124" width="342" height="40" rx="6" fill="#052e16" stroke="#34d399"/>
+    <text x="1029" y="148" font-size="12" font-weight="700" text-anchor="middle" fill="#34d399">Admin · /admin/cache-dashboard — Recharts + SSE</text>
+  </g>
+
+  <!-- client -> server request arrow -->
+  <path d="M 620 188 L 620 224" stroke="#38bdf8" stroke-width="2" marker-end="url(#mBlue)"/>
+  <text x="630" y="210" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#94a3b8">GET / POST /api/*</text>
+
+  <!-- ===================== SERVER ===================== -->
+  <rect x="30" y="232" width="1180" height="560" rx="16" fill="#101a2c" stroke="#475569" stroke-width="1.5"/>
+  <text x="50" y="262" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="700" fill="#e2e8f0">EXPRESS API — server/src (Express 4 · Node 20 · PORT 3001)</text>
+  <text x="1190" y="262" font-family="Segoe UI, Arial, sans-serif" font-size="11.5" text-anchor="end" fill="#64748b">CACHE_MODE=no-cache ⇒ exact Phase 1 passthrough</text>
+
+  <!-- section: column A request path -->
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <!-- routes -->
+    <rect x="50" y="286" width="610" height="62" rx="10" fill="#18263f" stroke="#334155"/>
+    <text x="68" y="306" font-size="12" font-weight="700" fill="#94a3b8">ROUTES → CONTROLLERS (thin)</text>
+    <text x="68" y="327" font-size="11.5" fill="#cbd5e1">products.js · categories.js · orders.js — pass query params, no business logic</text>
+    <text x="68" y="343" font-size="11.5" fill="#cbd5e1">controllers → services [cache insertion point lives below, in the services layer]</text>
+  </g>
+
+  <!-- routes -> engine -->
+  <path d="M 355 348 L 355 370" stroke="#38bdf8" stroke-width="2" marker-end="url(#mBlue)"/>
+  <text x="366" y="362" font-family="Segoe UI, Arial, sans-serif" font-size="10.5" fill="#7c8ba1">cache.get(key)</text>
+
+  <!-- section: engine -->
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <rect x="50" y="374" width="610" height="208" rx="10" fill="#221a4a" stroke="#a78bfa" stroke-width="1.5"/>
+    <text x="68" y="396" font-size="13" font-weight="700" fill="#c4b5fd">ADAPTIVE CACHE ENGINE — services/cache/ · adaptiveCache.js · manager.js · utility.js</text>
+
+    <rect x="66" y="406" width="578" height="30" rx="6" fill="#0f172a" stroke="#4c3f96"/>
+    <text x="355" y="425" font-family="Consolas, Menlo, monospace" font-size="12.5" text-anchor="middle" fill="#e9d5ff">U = ((Ĉ_lat·wL + Ĉ_$·wM) · log(1+F)) / Size · e^(−λΔt)</text>
+
+    <rect x="66" y="442" width="278" height="44" rx="6" fill="#16132e" stroke="#334155"/>
+    <text x="86" y="460" font-size="11.5" font-weight="700" fill="#a78bfa">Min-heap + lazy deletion</text>
+    <text x="86" y="478" font-size="10.5" fill="#cbd5e1">lowest-utility victim in O(log N)</text>
+
+    <rect x="354" y="442" width="278" height="44" rx="6" fill="#16132e" stroke="#334155"/>
+    <text x="374" y="460" font-size="11.5" font-weight="700" fill="#a78bfa">Admission filter (S3-FIFO)</text>
+    <text x="374" y="478" font-size="10.5" fill="#cbd5e1">probation trial layer + value gate</text>
+
+    <rect x="66" y="492" width="278" height="44" rx="6" fill="#16132e" stroke="#334155"/>
+    <text x="86" y="510" font-size="11.5" font-weight="700" fill="#a78bfa">Decayed frequency</text>
+    <text x="86" y="528" font-size="10.5" fill="#cbd5e1">F = 0.99·F + 1 per hit (no pollution)</text>
+
+    <rect x="354" y="492" width="278" height="44" rx="6" fill="#16132e" stroke="#334155"/>
+    <text x="374" y="510" font-size="11.5" font-weight="700" fill="#a78bfa">Recency decay · TTL</text>
+    <text x="374" y="528" font-size="10.5" fill="#cbd5e1">idle aging via e^(−λΔt) · per-type TTLs</text>
+
+    <rect x="66" y="542" width="578" height="32" rx="6" fill="#0f172a" stroke="#4c3f96"/>
+    <text x="355" y="563" font-size="11" text-anchor="middle" fill="#e9d5ff">POLICIES RUNNING — adaptive (active) · gdsf (shadow) · no-cache (Phase 1 counter)</text>
+  </g>
+
+  <!-- engine -> services -->
+  <path d="M 355 582 L 355 602" stroke="#38bdf8" stroke-width="2" marker-end="url(#mBlue)"/>
+  <text x="366" y="596" font-family="Segoe UI, Arial, sans-serif" font-size="10.5" fill="#7c8ba1">miss ⇒ compute · cache.set(key, value, meta)</text>
+
+  <!-- invalidation (services -> engine), red dashed -->
+  <path d="M 560 606 L 560 590" stroke="#f87171" stroke-width="1.8" stroke-dasharray="4 3" marker-end="url(#mRed)"/>
+
+  <!-- section: services -->
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <rect x="50" y="606" width="610" height="150" rx="10" fill="#18263f" stroke="#334155"/>
+    <text x="68" y="628" font-size="12" font-weight="700" fill="#94a3b8">WRAPPED SERVICES — cache insertion point (cache.get → miss → compute → cache.set)</text>
+    <text x="68" y="650" font-size="11.5" fill="#cbd5e1">productService.js — listProducts · getProductById · listCategories</text>
+    <text x="68" y="668" font-size="11.5" fill="#cbd5e1">categoryService lives in productService.listCategories (routes/categories.js)</text>
+    <text x="68" y="686" font-size="11.5" fill="#cbd5e1">orderService.js — listByCustomer · create · updateStatus (fileDb read/write)</text>
+    <text x="68" y="706" font-size="11.5" fill="#cbd5e1">miss path: service computes → cache.set(key, value, {type, sizeMB, costLatency, costMoney, ttl})</text>
+  </g>
+
+  <!-- section: column B control plane and observability -->
+  <line x1="690" y1="292" x2="690" y2="770" stroke="#2c3b52" stroke-width="1"/>
+
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <rect x="700" y="286" width="490" height="62" rx="10" fill="#18263f" stroke="#334155"/>
+    <text x="718" y="306" font-size="12" font-weight="700" fill="#fbbf24">CONTROL PLANE — routes/cache.js</text>
+    <text x="718" y="326" font-size="11.5" fill="#cbd5e1">GET /api/cache/stats · config · evictions · reset</text>
+    <text x="718" y="342" font-size="11.5" fill="#cbd5e1">POST /config (wL · wM · λ live, no restart) · simulate · stream</text>
+
+    <rect x="700" y="354" width="490" height="92" rx="10" fill="#18263f" stroke="#334155"/>
+    <text x="718" y="376" font-size="12" font-weight="700" fill="#fbbf24">WORKLOAD SIMULATOR — POST /api/cache/simulate</text>
+    <text x="718" y="396" font-size="11.5" fill="#cbd5e1">Zipfian popularity + Poisson arrivals · 200–1200 req/s · not real users</text>
+    <text x="718" y="414" font-size="11.5" fill="#cbd5e1">NORMAL · BBD_SPIKE · SHIFT (Diwali→Christmas) · COLD_START</text>
+    <text x="718" y="432" font-size="11.5" fill="#cbd5e1">same stream replayed through every policy side by side</text>
+
+    <rect x="700" y="452" width="490" height="66" rx="10" fill="#18263f" stroke="#334155"/>
+    <text x="718" y="474" font-size="12" font-weight="700" fill="#fbbf24">COST ADVISOR — simulated auto-scaler</text>
+    <text x="718" y="494" font-size="11.5" fill="#cbd5e1">preventable-miss $/s × traffic rate vs 100 MB node cost</text>
+    <text x="718" y="510" font-size="11.5" fill="#cbd5e1">SCALE_UP recommendation + ROI (₹ = $ × 83) — no real scaling</text>
+
+    <rect x="700" y="524" width="490" height="78" rx="10" fill="#18263f" stroke="#334155"/>
+    <text x="718" y="546" font-size="12" font-weight="700" fill="#f87171">WRITE-PATH INVALIDATION</text>
+    <text x="718" y="566" font-size="11.5" fill="#cbd5e1">order create / cancel / status change + stock decrement →</text>
+    <text x="718" y="584" font-size="11.5" fill="#cbd5e1">del products:list:* · product:detail:{id} · orders:customer:*</text>
+    <text x="718" y="600" font-size="11.5" fill="#cbd5e1">categories:list (when stock = 0) — TTLs 5 m / 2 m / 30 s / 10 m</text>
+
+    <rect x="700" y="608" width="490" height="92" rx="10" fill="#18263f" stroke="#334155"/>
+    <text x="718" y="630" font-size="12" font-weight="700" fill="#34d399">OBSERVABILITY — SSE /api/cache/stream</text>
+    <text x="718" y="650" font-size="11.5" fill="#cbd5e1">1 s ticks + lifecycle events streamed to the dashboard:</text>
+    <text x="718" y="668" font-size="11.5" fill="#cbd5e1">hit rate adaptive vs gdsf vs no-cache · ₹ / latency saved</text>
+    <text x="718" y="686" font-size="11.5" fill="#cbd5e1">memory by type · eviction feed · P99 (simulated)</text>
+
+    <rect x="700" y="706" width="490" height="70" rx="10" fill="#1e293b" stroke="#fbbf24"/>
+    <text x="718" y="728" font-size="12" font-weight="700" fill="#fbbf24">REDIS READINESS (PRD Phase 2b)</text>
+    <text x="718" y="748" font-size="11.5" fill="#cbd5e1">store is in-memory per instance today (hackathon scope) —</text>
+    <text x="718" y="764" font-size="11.5" fill="#cbd5e1">swap the store for Redis at scale; keep this policy layer</text>
+  </g>
+
+  <!-- ===================== DATA ===================== -->
+  <path d="M 620 792 L 620 812" stroke="#38bdf8" stroke-width="2" marker-end="url(#mBlue)"/>
+  <text x="630" y="806" font-family="Segoe UI, Arial, sans-serif" font-size="11" fill="#94a3b8">reads on cache miss</text>
+
+  <rect x="30" y="820" width="1180" height="120" rx="14" fill="#101a2c" stroke="#475569" stroke-width="1.5"/>
+  <text x="50" y="848" font-family="Segoe UI, Arial, sans-serif" font-size="13" font-weight="700" fill="#94a3b8">DATA LAYER — read only on cache miss · Phase 1 logic untouched</text>
+
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <rect x="60" y="862" width="545" height="56" rx="8" fill="#1e293b" stroke="#38bdf8"/>
+    <text x="80" y="886" font-size="12.5" font-weight="700" fill="#7dd3fc">data/products.js</text>
+    <text x="80" y="904" font-size="11.5" fill="#cbd5e1">in-memory catalog — 15 products, 5 categories (scan · search · sort)</text>
+
+    <rect x="625" y="862" width="545" height="56" rx="8" fill="#1e293b" stroke="#fb923c"/>
+    <text x="645" y="886" font-size="12.5" font-weight="700" fill="#fb923c">db/fileDb.js</text>
+    <text x="645" y="904" font-size="11.5" fill="#cbd5e1">JSON file order store (orders.json) — demo-only · swap for DB + Redis</text>
+  </g>
+
+  <!-- section: dashboard control plane link -->
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <!-- dashboard -> server (config / simulate / reset) -->
+    <path d="M 1204 150 L 1226 150 L 1226 316 L 1194 316" fill="none" stroke="#34d399" stroke-width="1.8" marker-end="url(#mGreen)"/>
+    <!-- server -> dashboard (SSE ticks + events) -->
+    <path d="M 1192 316 L 1233 316 L 1233 150 L 1206 150" fill="none" stroke="#34d399" stroke-width="1.8" marker-end="url(#mGreen)"/>
+
+    <text x="1240" y="300" font-size="11" text-anchor="middle" fill="#fbbf24" transform="rotate(-90 1240 300)">POST /api/cache/config · simulate · reset</text>
+    <text x="1240" y="560" font-size="11" text-anchor="middle" fill="#34d399" transform="rotate(-90 1240 560)">SSE /api/cache/stream — ticks + eviction events</text>
+  </g>
+
+  <!-- ===================== legend ===================== -->
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <path d="M 30 973 L 70 973" stroke="#38bdf8" stroke-width="3"/>
+    <text x="80" y="977" font-size="11.5" fill="#94a3b8">request / data flow</text>
+
+    <path d="M 228 973 L 268 973" stroke="#f87171" stroke-width="2" stroke-dasharray="4 3"/>
+    <text x="278" y="977" font-size="11.5" fill="#94a3b8">write ⇒ invalidate</text>
+
+    <path d="M 440 973 L 480 973" stroke="#a78bfa" stroke-width="3"/>
+    <text x="490" y="977" font-size="11.5" fill="#94a3b8">utility-scored cache engine</text>
+
+    <path d="M 700 973 L 740 973" stroke="#34d399" stroke-width="3"/>
+    <text x="750" y="977" font-size="11.5" fill="#94a3b8">dashboard ⇄ control plane (SSE / POST)</text>
+  </g>
+</svg>
