@@ -1,376 +1,1686 @@
-# Product Requirement Document (PRD) — ShopVerse Adaptive Cache
+# Product Requirement Document (PRD)
+# ShopVerse Adaptive Redis Cache
 
-**Project Name:** ShopVerse Adaptive, Application-Aware Cache Management System  
-**Base Project:** ShopVerse — Full-stack e-commerce (React JSX + Express) — No cache phase  
-**Target:** Phase 2 Implementation — Add Caching & Observability in 30-Hour Build  
-**Document Version:** 2.0.0 — E-commerce Mapped  
-**Status:** Architecture Ready / Ready for Implementation  
-**Original PRD Reference:** `uploads/adaptive_cache_system_prd.md` v1.0.0
-
----
-
-## 1. Overview & Core Value Proposition
-
-### 1.1 Current ShopVerse Architecture (Phase 1 — No Cache)
-
-From your README:
-
-```
-client/ (React JSX, Vite)  --/api/* proxy-->  server/ (Express)
-                                               ├── routes/ (thin)
-                                               ├── controllers/ (thin)
-                                               ├── services/ (business rules)
-                                               │   ├── productService.js (in-memory catalog + stock decrement)
-                                               │   ├── orderService.js
-                                               │   └── categoryService.js
-                                               ├── data/products.js (15 products, 5 categories)
-                                               └── db/fileDb.js (JSON file order store)
-```
-
-**Phase 1 is intentionally cache-less** — every `GET /api/products?search=&category=&sort=` hits `productService` which scans in-memory array, sorts, filters. Every `GET /api/products/:id` recomputes related products.
-
-**Pain in production scale:**
-- Product catalog read: **5-15ms, $0.00005, 0.2MB** — cheap, high frequency, cacheable long TTL
-- Product detail + related products: **80-150ms, $0.0005, 0.6MB** — medium, needs DB + similarity calc
-- Search + filter + sort: **120-300ms, $0.001, 1.2MB** — expensive, scans + sorts 15→10k products at scale
-- Order history `GET /api/orders?customerId=`: **40-80ms, $0.0003, 0.5MB** — medium, fileDb read + sort
-- Checkout `POST /api/orders`: **400-800ms, $0.008, 1MB** — very expensive, validation + stock check + pricing + file write + fraud (future)
-
-Today all treated equal — no cache. At **Big Billion Day 10x spike**, search and related-products recomputed 10k times/sec → P99 800ms → 2.2s, fileDb contention, stock oversell.
-
-### 1.2 The Solution for ShopVerse
-
-An **Application-Aware Cache Engine** that wraps `server/src/services/` — replaces naive no-cache / LRU with **Dynamic Multi-Factor Utility Scoring**.
-
-**Value Density for ShopVerse:**
-```
-U = ((normLatency * wL + normMoney * wM) * log(1+Freq)) / Size * e^(-λΔt)
-
-CATALOG (list):  U = (0.05 * log(100)/0.2) = 0.12 → Keep but evict first if needed
-DETAIL+RELATED:  U = (0.3 * log(50)/0.6) = 0.45 → Keep
-SEARCH:          U = (0.6 * log(30)/1.2) = 0.35 → Keep
-ORDER HISTORY:   U = (0.2 * log(10)/0.5) = 0.18 → Medium
-CHECKOUT RESULT: U = (1.0 * log(5)/1.0) = 0.70 → Keep most (expensive to recompute)
-```
-
-Keeps expensive search/checkout, evicts cheap catalog when memory pressure — saves $ and P99.
+**Project Name:** ShopVerse Adaptive, Application-Aware Redis Cache Management System  
+**Base Project:** ShopVerse — Full-stack e-commerce (React JSX + Express)  
+**Phase:** Phase 2 — Redis Caching, Adaptive Eviction & Observability  
+**Version:** 3.0.0  
+**Status:** Ready for Implementation  
+**Target Build:** 30-hour hackathon implementation
 
 ---
 
-## 2. High-Level Architecture — ShopVerse Phase 2
+## 1. Product Vision
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        Client (React JSX)                               │
-│  Home (catalog) | Product (detail+related) | Cart | Checkout | Orders   │
-│  + NEW: /admin/cache-dashboard (Real-Time)                              │
-└──────────────────────────────┬──────────────────────────────────────────┘
-                               │ /api/* proxy (Vite)
-                               ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    Express API (server/src)                             │
-│                                                                         │
-│  routes/ → controllers/ → services/  [CACHE INSERTION POINT]             │
-│                            ┌─────────────────────────────────┐          │
-│                            │  Adaptive Cache Engine (NEW)    │          │
-│                            │  ┌───────────────────────────┐  │          │
-│                            │  │ Utility Engine            │  │          │
-│                            │  │ U = (C_L+C_M)*F/S*e^-λΔt  │  │          │
-│                            │  └───────────┬───────────────┘  │          │
-│                            │              ↓                  │          │
-│                            │  [In-Memory Store + Heap]       │          │
-│                            │  LRU / LFU / GDSF baselines     │          │
-│                            │  Cost-Aware Auto-Scaler Advisor │          │
-│                            └───────────┬─────────────────────┘          │
-│                                        │                                │
-│                            ┌───────────▼───────────┐                    │
-│                            │ productService.js     │                    │
-│                            │ orderService.js       │                    │
-│                            │ categoryService.js    │                    │
-│                            └───────────┬───────────┘                    │
-│                                        │                                │
-│                            ┌───────────▼───────────┐                    │
-│                            │ data/products.js      │                    │
-│                            │ db/fileDb.js (→ DB)   │                    │
-│                            └───────────────────────┘                    │
-│                                                                         │
-│  + NEW: /api/cache/* endpoints (stats, config, evictions)               │
-│  + NEW: /api/cache/simulate (traffic generator for testing)             │
-└──────────────────────────────┬──────────────────────────────────────────┘
-                               │ WebSocket / SSE JSON Stream
-                               ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│              Metrics & Telemetry Stream                                 │
-│  Hit Rate: Adaptive vs LRU vs LFU vs GDSF vs No-Cache                   │
-│  Latency Saved, ₹ Saved, Memory by type (CATALOG/PRICE/REC)             │
-└──────────────────────────────┬──────────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│         NEW: client/src/pages/CacheDashboard.jsx                        │
-│         Recharts: Hit Rate, Cost Savings, Memory, Eviction Feed         │
-│         Controls: Scenario Toggle (Normal, BBD Spike, Shift, Cold)      │
-│                   Weight Sliders (wL, wM, λ) live                       │
-└─────────────────────────────────────────────────────────────────────────┘
+ShopVerse currently operates without a production-style cache. Product lists, product details, search/filter operations, categories, and order history repeatedly execute their underlying service logic.
 
-Simulated Workload Engine (for testing, not real users):
-- Generates 200 req/sec with Zipfian product popularity
-- Scenarios controllable from dashboard
-```
+The goal of Phase 2 is to add a **real Redis-based caching system** with an **application-aware adaptive caching policy**.
+
+The system must not simply enable Redis LRU/LFU. Instead:
+
+> **Redis is the storage and execution layer; the Adaptive Cache Engine is the intelligence layer that decides what should enter, remain in, or leave Redis.**
+
+The project must expose APIs so that the cache can be configured, monitored, simulated, benchmarked, and demonstrated from the ShopVerse application.
 
 ---
 
-## 3. Core Functional Requirements — Mapped to ShopVerse
+# 2. Problem Statement
 
-### 3.1 Dynamic Utility Scoring Engine (ShopVerse Tuned)
+Traditional Redis cache policies such as LRU and LFU mainly consider recency or frequency.
 
-**Mathematical Formula (Corrected from v1.0.0 bug):**
+Consider:
 
-Original v1.0 had typo `Static` and unit mismatch. Corrected for ShopVerse:
+```text
+Query A
+Latency: 10ms
+Cost: $0.00005
+Size: 0.2MB
+Frequency: 100
 
-```
-U_i(t) = ((Ĉ_lat * wL + Ĉ_$ * wM) * log(1+F_i)) / S_i * e^(-λ * (t - t_last))
-
-Where for ShopVerse:
-- Ĉ_lat = normalized latency: (lat - 5) / (800 - 5)
-  - CATALOG list: 5-15ms → 0.0-0.02
-  - DETAIL+RELATED: 80-150ms → 0.1-0.2
-  - SEARCH: 120-300ms → 0.15-0.38
-  - ORDER HISTORY: 40-80ms → 0.05-0.1
-  - CHECKOUT: 400-800ms → 0.5-1.0
-
-- Ĉ_$ = normalized money: (cost - 0.00005) / (0.008 - 0.00005)
-  - CATALOG: $0.00005 → 0.0
-  - DETAIL: $0.0005 → 0.06
-  - SEARCH: $0.001 → 0.12
-  - ORDER HISTORY: $0.0003 → 0.03
-  - CHECKOUT: $0.008 → 1.0
-
-- F_i = decayed frequency: F = F*0.99 + 1 on each hit (prevents pollution)
-- S_i = size MB
-- e^(-λΔt) = recency decay, λ tunable live via /api/cache/config
+Query B
+Latency: 250ms
+Cost: $0.001
+Size: 1.2MB
+Frequency: 10
 ```
 
-**Requirements:**
-- Re-evaluate utility in O(log N) using heap with lazy deletion (not O(N) scan)
-- Weights wL, wM, λ configurable via `POST /api/cache/config` without restart — dashboard sliders call this
-- Must support 4 cache modes: `adaptive`, `lru`, `lfu`, `gdsf`, `no-cache` (current) for comparison
+A conventional frequency/recency policy may retain Query A because it is requested frequently.
 
-### 3.2 ShopVerse Service Integration (Where Cache Wraps)
+However, Query B is significantly more expensive to recompute.
 
-**File to modify: `server/src/services/productService.js`**
+Therefore, ShopVerse needs an adaptive policy that considers:
 
-Current (Phase 1):
-```js
-function listProducts({ category, search, sort }) {
-  // scans data/products.js every time
+- Computation latency
+- Monetary/computation cost
+- Request frequency
+- Response size
+- Recency
+- Cache capacity
+- Data type
+- Time decay
+
+---
+
+# 3. Core Objective
+
+Build a real Redis-backed adaptive cache system that:
+
+1. Caches expensive ShopVerse API responses.
+2. Uses Redis as the actual cache.
+3. Calculates application-aware utility scores.
+4. Uses utility for cache admission and eviction.
+5. Provides LRU, LFU and GDSF baselines.
+6. Provides a no-cache baseline.
+7. Tracks real Redis commands and cache metrics.
+8. Provides REST APIs for cache management.
+9. Provides an SSE stream for live dashboard metrics.
+10. Provides a workload simulator for Normal, BBD Spike, Shift and Cold Start scenarios.
+11. Provides Redis monitoring through RedisInsight and `redis-cli`.
+12. Preserves existing ShopVerse APIs when caching is disabled.
+
+---
+
+# 4. Required API Implementation
+
+The Phase 2 project MUST create a complete cache API.
+
+## 4.1 Cache Statistics
+
+### GET `/api/cache/stats`
+
+Returns current application cache and Redis metrics.
+
+Example:
+
+```json
+{
+  "mode": "adaptive",
+  "hitRate": 91.4,
+  "hits": 12482,
+  "misses": 1171,
+  "requests": 13653,
+  "memory": {
+    "usedMB": 47.2,
+    "capacityMB": 100
+  },
+  "redis": {
+    "connected": true,
+    "usedMemoryMB": 47.2,
+    "totalKeys": 1284,
+    "evictedKeys": 843,
+    "expiredKeys": 421,
+    "keyspaceHits": 12482,
+    "keyspaceMisses": 1171
+  },
+  "latency": {
+    "avgRedisMs": 0.63,
+    "p99RedisMs": 1.42,
+    "p99ApplicationMs": 84
+  },
+  "savings": {
+    "latencySeconds": 1824.5,
+    "money": 87.23,
+    "rupees": 7240.09
+  }
 }
 ```
 
-Phase 2 with Adaptive Cache:
-```js
-import { adaptiveCache } from './cache/adaptiveCache.js'
+---
 
-function listProducts({ category, search, sort }) {
-  const key = `products:list:${category}:${search}:${sort}`
-  const hit = adaptiveCache.get(key)
-  if (hit) return hit
+# 5. Cache Configuration API
 
-  const result = computeExpensive(...) // existing logic
-  adaptiveCache.set(key, result, {
-    sizeMB: 0.2 + search.length*0.01,
-    costLatency: 15 + (search?100:0) + (sort?50:0), // search+sort more expensive
-    costMoney: 0.00005 + (search?0.0005:0),
-    type: 'CATALOG'
-  })
-  return result
+## POST `/api/cache/config`
+
+Runtime configuration without restarting the server.
+
+Request:
+
+```json
+{
+  "mode": "adaptive",
+  "wL": 0.6,
+  "wM": 0.4,
+  "lambda": 0.01,
+  "capacityMB": 100
 }
 ```
 
-**Insertion points:**
+Supported modes:
 
-| Endpoint | Service Function | Cache Key | Cost Model | TTL | Type |
-|---|---|---|---|---|---|
-| `GET /api/products` | `productService.listProducts` | `products:list:{category}:{search}:{sort}` | 5-15ms + 100ms if search, $0.00005-0.001, 0.2-1.2MB | 5 min, invalidate on stock change | CATALOG |
-| `GET /api/products/:id` | `productService.getProductById` | `product:detail:{id}` | 80-150ms (related calc), $0.0005, 0.6MB | 2 min | DETAIL |
-| `GET /api/categories` | `categoryService.list` | `categories:list` | 5ms, $0.00002, 0.05MB | 10 min | CATALOG |
-| `GET /api/orders?customerId=` | `orderService.listByCustomer` | `orders:customer:{customerId}` | 40-80ms fileDb read, $0.0003, 0.5MB | 30 sec, invalidate on new order | ORDER |
-| `POST /api/orders` | `orderService.create` | No cache, but invalidates `products:*` and `orders:customer:*` + single-flight lock | 400-800ms, $0.008 | N/A | CHECKOUT |
-
-**Natural caching insertion points from your README are now implemented.**
-
-### 3.3 Workload Drivers — ShopVerse E-commerce
-
-Replace generic Read-Heavy / ML Rec drivers with ShopVerse drivers:
-
-1. **Browsing Driver (CATALOG) — 60% traffic normal:**
-   - Keys: `products:list:all`, `products:list:electronics`, `product:detail:1..15`
-   - Size: 0.1-0.4MB, Lat: 5-15ms, Cost: $0.00005
-   - Pattern: Zipfian — 20% products (iPhone, Samsung) get 80% views
-
-2. **Search Driver (SEARCH) — 20% traffic:**
-   - Keys: `products:list:*:search=iphone&sort=price-asc`
-   - Size: 0.8-1.5MB, Lat: 120-300ms, Cost: $0.001
-   - Expensive due to filtering + sorting + text search
-
-3. **Detail + Related Driver (REC) — 15% traffic:**
-   - Keys: `product:detail:{id}` includes related products calculation
-   - Size: 0.5-0.8MB, Lat: 80-150ms, Cost: $0.0005
-   - Medium, but high value — user likely to add to cart
-
-4. **Checkout Driver (CHECKOUT) — 5% traffic but most expensive:**
-   - Keys: `orders:customer:{id}` + `POST /api/orders`
-   - Size: 0.5-1MB, Lat: 400-800ms, Cost: $0.008
-   - Includes validation, stock check, pricing (server-side), fileDb write
-
-### 3.4 Traffic & Workload Generator (ShopVerse BBD Simulator)
-
-**New endpoint: `POST /api/cache/simulate`**
-
-Must simulate realistic e-commerce changing patterns controllable via dashboard:
-
-- **Scenario A (Normal Tuesday — Steady Zipf):** α=1.2, 20% products drive 80% traffic. 60% browsing, 20% search, 15% detail, 5% checkout.
-- **Scenario B (Big Billion Day Spike — iPhone Launch):** Sudden 10x burst targeting `product:detail:1` (iPhone) + `products:list:*:search=iphone` + `rec` equivalent. 70% expensive keys. Tests if cache keeps expensive search/detail vs cheap catalog list.
-- **Scenario C (Diwali → Christmas Shift):** Hot set moves — Diwali: lights, sweets, ethnic wear → Christmas: gifts, cakes, winter wear. Tests decay — LFU should fail due to pollution, Adaptive should adapt via λ.
-- **Scenario D (Cold Start — New Category Launch):** All unique searches, cache empty, tests admission filter — should NOT cache one-hit wonders.
-
-Generator uses Poisson arrivals + Zipf key selection (like original PRD).
-
-### 3.5 Real-Time Observability Dashboard — ShopVerse Admin
-
-**New page: `client/src/pages/CacheDashboard.jsx` at `/admin/cache-dashboard`**
-
-Built using existing stack: React JSX + Recharts + Tailwind (your `styles.css`)
-
-**Live Charts (WebSocket or SSE from `/api/cache/stream`):**
-
-1. **Hit Rate % Comparison:** Adaptive vs LRU vs LFU vs GDSF vs No-Cache (Phase 1 baseline). Shows Adaptive wins during BBD spike.
-2. **Cumulative Latency Saved (seconds) & ₹ Saved:** `saved = sum(missCostAvoided)`. Convert $ to ₹ (×83). Show "₹7.2L/month saved per 50MB node".
-3. **Memory Footprint Allocation (MB):** Stacked bar by type: CATALOG (cyan, cheap) vs SEARCH (amber) vs DETAIL/REC (purple, expensive) vs ORDER (orange). Adaptive should be more purple/amber vs LRU cyan.
-4. **Eviction Feed:** Real-time list of evicted key, utility score U, type, size, cost. Should evict cyan CATALOG first, keep purple REC.
-5. **P99 Latency (Simulated):** Track `hit? 5ms : costLatency`. Show P99 spike during BBD with No-Cache/LRU vs Adaptive stable 85ms.
-6. **Cost Advisor Card (Simulated Auto-Scaler):** Logic: `If (preventableMisses * avgCost) > costOf100MBNode → Recommend SCALE_UP, ROI = saved/cost`. Shows "If +100MB, save $12/hr, node $0.15/hr → ROI 80x, SCALE_UP". No real scaling, just advisor number.
-
-**Controls:**
-- Scenario toggle: Normal, BBD Spike, Shift, Cold
-- Weight sliders: wL, wM, λ live via `POST /api/cache/config`
-- Capacity slider: 10MB-150MB
-- Req/sec slider: 50-1000
-
-### 3.6 Cache Invalidation Strategy (ShopVerse Specific)
-
-- **On `POST /api/orders` (stock decrement):** Invalidate `products:list:*`, `product:detail:{id}`, `categories:list` if stock 0
-- **On order creation:** Invalidate `orders:customer:{customerId}`
-- **TTL:** Catalog 5 min, Detail 2 min, Categories 10 min, Order history 30 sec
-- **Stale-While-Revalidate (TODO):** Serve stale DETAIL while async refresh if age > 80% TTL and U > threshold
-
----
-
-## 4. Non-Functional Requirements & Constraints
-
-- **Execution Window:** Must be operational within **30-hour build** on top of existing ShopVerse
-- **Latency Overhead:** Cache lookup + utility eval <2ms per request (use heap, not O(N) scan, pre-normalize costs once/sec)
-- **Backward Compatible:** Existing ShopVerse API must still work if cache disabled (`CACHE_MODE=no-cache`)
-- **Stateless API Ready:** FileDb must be replaced before real horizontal scaling — for hackathon, in-memory cache per instance is okay, but document that real scaling needs shared Redis + DB
-- **Comparative Baselines:** Must benchmark against: No-Cache (current Phase 1), LRU, LFU, GDSF
-
----
-
-## 5. Technology Stack — ShopVerse Phase 2
-
-| Layer | Technology | Justification |
-|---|---|---|
-| **Backend Core** | Node.js 20 / Express 4 (existing) | Keep existing, add cache layer in services |
-| **Cache Engine** | In-Memory Adaptive Cache (JS class) + optional Redis (Phase 2b) | No extra infra for hackathon, but Redis-ready interface. Same utility formula as original PRD (FastAPI → Express port) |
-| **Frontend** | React 18 JSX / React Router 6 / Vite 5 (existing) | Add new page `CacheDashboard.jsx` |
-| **Charting** | Recharts / Lucide (same as original PRD) | Lightweight real-time |
-| **Real-Time** | SSE or WebSockets (`/api/cache/stream`) | Stream metrics to dashboard |
-| **Workload Gen** | Node.js script using Zipf + Poisson (port from Python) | No Python needed, keep JS stack |
-
-**Why not FastAPI?** Original PRD used FastAPI, but ShopVerse is Express — keep JS for speed. Port utility formula to JS (already done in `adaptive-cache-react` demo).
-
----
-
-## 6. 30-Hour Hackathon Execution Roadmap — ShopVerse
-
+```text
+adaptive
+lru
+lfu
+gdsf
+no-cache
 ```
-[ Hours 00 - 03 ] Schema & Cost Model Lockdown
-                  ├── Map ShopVerse endpoints to cost model (CATALOG 0.00005$, SEARCH 0.001$, CHECKOUT 0.008$)
-                  ├── Define cache key schema: products:list:{cat}:{search}:{sort}
-                  ├── Define Entry: {key, sizeMB, costLatency, costMoney, freq, lastAccess, type, utility}
-                  └── Define WebSocket/SSE JSON contract for dashboard
 
-[ Hours 03 - 10 ] Backend Cache Engine
-                  ├── Create server/src/services/cache/ folder
-                  │   ├── baseCache.js (interface)
-                  │   ├── adaptiveCache.js (port from adaptive-cache-react/src/algorithms/adaptive.js) - fix normalization + heap
-                  │   ├── lruCache.js, lfuCache.js, gdsfCache.js
-                  │   └── costAdvisor.js (simulated auto-scaler)
-                  ├── Wrap productService.js, categoryService.js, orderService.js with cache.get/set
-                  ├── Add routes: /api/cache/stats, /api/cache/config, /api/cache/stream, /api/cache/simulate
-                  └── Add invalidation on POST /api/orders
+Response:
 
-[ Hours 10 - 16 ] Workload Simulator & API Wiring
-                  ├── Port WorkloadGenerator from adaptive-cache-react/src/workload/generator.js to Node
-                  ├── Implement 4 scenarios: Normal, BBD Spike, Shift, Cold
-                  ├── Add single-flight lock for checkout (prevent 1000x stock check on same product during spike)
-                  └── Test via curl: /api/cache/simulate?scenario=BBD_SPIKE
-
-[ Hours 16 - 24 ] React Dashboard Build
-                  ├── Create client/src/pages/CacheDashboard.jsx (copy from adaptive-cache-react/src/App.jsx but adapt to ShopVerse)
-                  ├── Components: HitRateChart, CostSavingsChart (₹), MemoryAllocation, EvictionFeed, ScenarioControls, WeightSliders
-                  ├── Add route /admin/cache-dashboard in App.jsx
-                  ├── Connect to SSE /api/cache/stream
-                  └── Add BBD banner: "🔥 Big Billion Day Live: iPhone Launch - 10x Traffic!"
-
-[ Hours 24 - 30 ] Benchmarking, Demo Prep, Polish
-                  ├── Run benchmarks: No-Cache vs LRU vs GDSF vs Adaptive across 4 scenarios
-                  ├── Capture metrics: Hit rate, P99, ₹ saved, memory by type
-                  ├── Record 5-min pitch video: Show Normal → BBD Spike → P99 2.2s vs 85ms → ₹ saved
-                  ├── Update README.md with Phase 2 architecture
-                  └── Finalize repo: npm run dev still works, cache can be disabled via env CACHE_MODE=no-cache
+```json
+{
+  "success": true,
+  "config": {
+    "mode": "adaptive",
+    "wL": 0.6,
+    "wM": 0.4,
+    "lambda": 0.01,
+    "capacityMB": 100
+  }
+}
 ```
 
 ---
 
-## 7. Success Criteria & Deliverables — ShopVerse
+# 6. Cache Entries API
 
-1. **Working ShopVerse + Cache:** `npm run dev` starts API + web + cache. Existing flows (catalog, search, cart, checkout) still work. Cache can be toggled off.
-2. **Measurable Improvement:** During BBD Spike scenario, demonstrate ≥25% reduction in P99 latency and ≥40% $ saved vs No-Cache and vs LRU. Target: 60% like GD-Wheel (90% cost reduction). Show ₹ saved.
-3. **Live Interactive Dashboard:** `/admin/cache-dashboard` capable of toggling scenarios live, showing hit rate, ₹ saved, memory allocation, eviction feed, and weight sliders that change behavior live.
-4. **Code Quality:** Cache wraps services, not routes — layered architecture preserved. FileDb still demo-only but documented that real DB + Redis needed for horizontal scaling.
-5. **Pitch Story:** Can explain to non-tech judge: "Flipkart BBD iPhone launch, LRU evicts ₹2 AI rec to keep ₹0.001 catalog, costs ₹75L/hr. Our adaptive keeps ₹2 recs, saves ₹7.2L/month per 50MB node."
+## GET `/api/cache/entries`
 
----
+Returns cached entries and metadata.
 
-## 8. Appendix — Mapping Original PRD to ShopVerse
+Query parameters:
 
-| Original PRD (Generic) | ShopVerse Mapping | Implementation File |
-|---|---|---|
-| Read-Heavy API Service (0.1MB, 10ms, $0.0001) | CATALOG `GET /api/products` `GET /api/categories` | `productService.listProducts`, `categoryService.list` |
-| Compute-Heavy ML Rec Service (3MB, 2000ms, $0.03) | SEARCH + DETAIL+RELATED `GET /api/products?search=&sort=` `GET /api/products/:id` (related calc) | `productService.listProducts` (search+sort path), `getProductById` |
-| Workload Engine Zipf/Spike/Shift | Same, but keys are ShopVerse product IDs (15 products → simulate 600 for realism) | `server/src/services/cache/workloadGenerator.js` |
-| FastAPI + Next.js | Express + React JSX (ShopVerse stack) | Keep JS, port formula |
-| Metrics Stream WebSocket | SSE `/api/cache/stream` → Recharts dashboard | `CacheDashboard.jsx` |
-| Cost-Aware Auto-Scaler | Cost Advisor Card: "If +100MB, save $X, node $Y" | `costAdvisor.js` |
+```text
+?type=SEARCH
+?sort=utility
+?limit=50
+```
 
-**Original PRD bugs fixed in this version:**
-- Formula typo `Static` → corrected to `e^(-λΔt)`
-- Added normalization (cost heterogeneity 800x in ShopVerse)
-- Added log(1+F) to prevent frequency explosion
-- Added heap O(log N) requirement
-- Added admission filter, single-flight, invalidation strategy specific to ShopVerse
+Example:
 
----
-
-## 9. References for ShopVerse Implementation
-
-- Your existing `adaptive-cache-react` demo — already implements 4 caches + dashboard in JSX, port its `adaptive.js` to Express
-- GD-Wheel EuroSys15 — 90% cost reduction vs LRU, same idea
-- S3-FIFO SOSP23 — admission filter is #1 win
-- ShopVerse README — layered architecture, natural caching insertion points
+```json
+{
+  "entries": [
+    {
+      "key": "shopverse:cache:product:detail:1",
+      "type": "DETAIL",
+      "sizeMB": 0.6,
+      "costLatency": 120,
+      "costMoney": 0.0005,
+      "frequency": 43,
+      "utility": 0.82,
+      "ttl": 113,
+      "lastAccess": 1725470000
+    }
+  ]
+}
+```
 
 ---
 
-**Recommendation: APPROVED for ShopVerse Phase 2. Start with `server/src/services/cache/adaptiveCache.js` ported from `adaptive-cache-react/src/algorithms/adaptive.js`, then wrap `productService.js`.**
+# 7. Eviction API
 
+## GET `/api/cache/evictions`
+
+Returns recent eviction events.
+
+Example:
+
+```json
+{
+  "evictions": [
+    {
+      "key": "shopverse:cache:products:list:all",
+      "utility": 0.12,
+      "type": "CATALOG",
+      "sizeMB": 0.2,
+      "reason": "LOW_UTILITY"
+    }
+  ]
+}
+```
+
+---
+
+# 8. Manual Cache Operations
+
+## DELETE `/api/cache/clear`
+
+Clears all application cache data.
+
+## DELETE `/api/cache/key/:key`
+
+Deletes a specific cached key.
+
+## POST `/api/cache/invalidate`
+
+Request:
+
+```json
+{
+  "pattern": "product:*"
+}
+```
+
+The implementation must avoid blocking production traffic with Redis `KEYS`. Use `SCAN` or maintained Redis indexes.
+
+---
+
+# 9. Redis Monitoring API
+
+## GET `/api/cache/redis`
+
+Returns real Redis server information.
+
+Required information:
+
+```text
+connection status
+Redis version
+used memory
+peak memory
+memory fragmentation
+total keys
+keyspace hits
+keyspace misses
+evicted keys
+expired keys
+connected clients
+commands processed
+uptime
+```
+
+The values must be obtained from actual Redis commands such as:
+
+```text
+INFO
+INFO memory
+INFO stats
+INFO clients
+DBSIZE
+```
+
+Do not hard-code or simulate these values.
+
+---
+
+# 10. Redis Command Monitoring API
+
+## GET `/api/cache/commands`
+
+Returns recent Redis operations captured by the application.
+
+Example:
+
+```json
+{
+  "commands": [
+    {
+      "command": "GET",
+      "key": "shopverse:cache:product:detail:1",
+      "latencyMs": 0.42,
+      "timestamp": 1725470012
+    },
+    {
+      "command": "HINCRBY",
+      "key": "shopverse:meta:product:detail:1",
+      "latencyMs": 0.31,
+      "timestamp": 1725470012
+    },
+    {
+      "command": "ZADD",
+      "key": "shopverse:utility",
+      "latencyMs": 0.28,
+      "timestamp": 1725470012
+    }
+  ]
+}
+```
+
+The system should maintain a bounded in-memory recent-command buffer so command monitoring does not create unlimited memory usage.
+
+For development, the project must also work with:
+
+```bash
+redis-cli MONITOR
+```
+
+---
+
+# 11. Real-Time Metrics API
+
+## GET `/api/cache/stream`
+
+Implement Server-Sent Events (SSE).
+
+The endpoint should continuously publish:
+
+```json
+{
+  "type": "metrics",
+  "timestamp": 1725470012,
+  "hitRate": 91.4,
+  "memoryMB": 47.2,
+  "p99": 84,
+  "redisLatency": 0.63,
+  "rupeesSaved": 7240,
+  "evictions": 843
+}
+```
+
+Also support event types:
+
+```text
+metrics
+cache-hit
+cache-miss
+cache-set
+eviction
+redis-error
+scenario-change
+```
+
+---
+
+# 12. Workload Simulation API
+
+## POST `/api/cache/simulate`
+
+Request:
+
+```json
+{
+  "scenario": "BBD_SPIKE",
+  "requestsPerSecond": 500,
+  "durationSeconds": 30
+}
+```
+
+Supported scenarios:
+
+### NORMAL
+
+```text
+60% browsing
+20% search
+15% product detail
+5% checkout
+Zipf alpha = 1.2
+```
+
+### BBD_SPIKE
+
+```text
+10x traffic
+70% expensive requests
+iPhone/product-detail hot key
+search=iphone becomes extremely popular
+```
+
+### SHIFT
+
+Hot products/categories change over time.
+
+Example:
+
+```text
+Phase 1:
+Diwali products are hot.
+
+Phase 2:
+Christmas products become hot.
+```
+
+The purpose is to test frequency pollution and recency decay.
+
+### COLD_START
+
+Most requests are unique.
+
+The purpose is to verify that one-hit wonders are not blindly admitted into cache.
+
+---
+
+# 13. Benchmark API
+
+## POST `/api/cache/benchmark`
+
+Runs the same workload against:
+
+```text
+No Cache
+LRU
+LFU
+GDSF
+Adaptive
+```
+
+Request:
+
+```json
+{
+  "scenario": "BBD_SPIKE",
+  "requests": 10000,
+  "capacityMB": 100
+}
+```
+
+Response:
+
+```json
+{
+  "results": {
+    "adaptive": {
+      "hitRate": 91.2,
+      "p99Ms": 85,
+      "moneySaved": 12.4
+    },
+    "lru": {
+      "hitRate": 74.1,
+      "p99Ms": 212,
+      "moneySaved": 5.1
+    },
+    "lfu": {
+      "hitRate": 70.2,
+      "p99Ms": 231,
+      "moneySaved": 4.2
+    },
+    "gdsf": {
+      "hitRate": 82.4,
+      "p99Ms": 124,
+      "moneySaved": 8.7
+    },
+    "no-cache": {
+      "hitRate": 0,
+      "p99Ms": 800,
+      "moneySaved": 0
+    }
+  }
+}
+```
+
+Benchmark values must be calculated from the workload, not hard-coded.
+
+---
+
+# 14. Redis Architecture
+
+Redis must be a real service.
+
+Use:
+
+```text
+Redis 7+
+Node.js Redis client
+Docker Compose
+RedisInsight
+```
+
+Recommended architecture:
+
+```text
+React
+  ↓
+Express
+  ↓
+Adaptive Redis Cache
+  ↓
+Redis
+  ↓
+ShopVerse Services
+  ↓
+Database / fileDb
+```
+
+---
+
+# 15. Redis Project Structure
+
+Required structure:
+
+```text
+server/
+└── src/
+    ├── config/
+    │   ├── env.js
+    │   └── redis.js
+    │
+    ├── redis/
+    │   ├── redisClient.js
+    │   ├── redisKeys.js
+    │   ├── redisSerializer.js
+    │   ├── redisHealth.js
+    │   │
+    │   ├── cache/
+    │   │   ├── baseCache.js
+    │   │   ├── redisCache.js
+    │   │   ├── adaptiveRedisCache.js
+    │   │   ├── utilityEngine.js
+    │   │   ├── admissionController.js
+    │   │   ├── evictionController.js
+    │   │   ├── lruCache.js
+    │   │   ├── lfuCache.js
+    │   │   └── gdsfCache.js
+    │   │
+    │   ├── metrics/
+    │   │   ├── redisMetrics.js
+    │   │   ├── queryMonitor.js
+    │   │   └── metricsStore.js
+    │   │
+    │   └── locks/
+    │       └── singleFlight.js
+    │
+    ├── controllers/
+    │   └── cacheController.js
+    │
+    ├── routes/
+    │   └── cacheRoutes.js
+    │
+    └── services/
+        ├── productService.js
+        ├── orderService.js
+        └── categoryService.js
+
+redis/
+├── redis.conf
+├── README.md
+└── scripts/
+    ├── resetRedis.js
+    └── inspectRedis.js
+
+docker-compose.yml
+.env.example
+```
+
+---
+
+# 16. Redis Key Design
+
+All keys must use the `shopverse:` namespace.
+
+```text
+shopverse:cache:product:list:{hash}
+shopverse:cache:product:detail:{id}
+shopverse:cache:category:list
+shopverse:cache:orders:customer:{customerId}
+
+shopverse:meta:{cacheKey}
+
+shopverse:utility
+
+shopverse:metrics:hits
+shopverse:metrics:misses
+shopverse:metrics:evictions
+
+shopverse:lock:checkout:{cartId}
+
+shopverse:idempotency:{requestId}
+
+shopverse:config
+```
+
+Search/filter query parameters should be hashed instead of producing excessively long Redis keys.
+
+---
+
+# 17. Redis Data Structures
+
+Use Redis data structures correctly.
+
+## String
+
+Cached API response:
+
+```redis
+SET shopverse:cache:product:detail:1 "<json>" EX 120
+```
+
+## Hash
+
+Metadata:
+
+```redis
+HSET shopverse:meta:<key>
+  type DETAIL
+  sizeMB 0.6
+  costLatency 120
+  costMoney 0.0005
+  frequency 43
+  lastAccess 1725470012
+  utility 0.82
+```
+
+## Sorted Set
+
+Utility index:
+
+```redis
+ZADD shopverse:utility 0.82 "<cache-key>"
+```
+
+The lowest score represents the least useful candidate for eviction.
+
+## Counters
+
+Use:
+
+```redis
+INCR
+HINCRBY
+```
+
+for hits, misses and operation counts.
+
+## Locks
+
+Use Redis atomic operations for checkout/single-flight coordination.
+
+Example concept:
+
+```redis
+SET shopverse:lock:checkout:<id> <token> NX EX 5
+```
+
+---
+
+# 18. Adaptive Utility Formula
+
+Implement:
+
+```text
+U_i(t) =
+(
+  (Ĉ_lat × wL + Ĉ_$ × wM)
+  × log(1 + F_i)
+) / S_i
+× e^(-λΔt)
+```
+
+Where:
+
+```text
+Ĉ_lat = normalized latency
+Ĉ_$   = normalized monetary cost
+F_i   = decayed frequency
+S_i   = response size in MB
+λ     = recency decay parameter
+Δt    = time since last access
+```
+
+Latency normalization:
+
+```text
+Ĉ_lat = clamp((latency - 5) / (800 - 5), 0, 1)
+```
+
+Cost normalization:
+
+```text
+Ĉ_$ = clamp(
+  (cost - 0.00005) / (0.008 - 0.00005),
+  0,
+  1
+)
+```
+
+Frequency:
+
+```text
+F_new = F_old × 0.99 + 1
+```
+
+The normalization constants must be configurable.
+
+---
+
+# 19. Admission Policy
+
+A request should not automatically enter Redis.
+
+When a new object arrives:
+
+```text
+calculate utility
+        ↓
+check available capacity
+        ↓
+if enough capacity
+    admit
+else
+    find lowest utility entry
+        ↓
+compare new utility vs victim utility
+        ↓
+new utility > victim
+    evict victim
+    admit new entry
+else
+    reject admission
+```
+
+This is especially important for the COLD_START scenario.
+
+One-hit queries should not automatically pollute Redis.
+
+---
+
+# 20. Eviction Policy
+
+Adaptive eviction:
+
+```text
+victim = lowest utility score
+```
+
+Use:
+
+```redis
+ZRANGE shopverse:utility 0 0 WITHSCORES
+```
+
+Then:
+
+```text
+remove Redis value
+remove metadata
+remove utility entry
+record eviction
+```
+
+Do not perform a full scan of every cached object for every request.
+
+---
+
+# 21. Baseline Policies
+
+Implement separate policy classes:
+
+```text
+lruCache.js
+lfuCache.js
+gdsfCache.js
+adaptiveRedisCache.js
+```
+
+All policies should implement the same interface:
+
+```javascript
+get(key)
+set(key, value, metadata)
+delete(key)
+clear()
+stats()
+```
+
+This makes benchmarking fair.
+
+---
+
+# 22. ShopVerse Service Integration
+
+## Products
+
+Modify:
+
+```text
+server/src/services/productService.js
+```
+
+For:
+
+```http
+GET /api/products
+```
+
+Cache key:
+
+```text
+shopverse:cache:product:list:<hash>
+```
+
+For:
+
+```http
+GET /api/products/:id
+```
+
+Cache key:
+
+```text
+shopverse:cache:product:detail:<id>
+```
+
+---
+
+# 23. Category Integration
+
+Modify:
+
+```text
+categoryService.js
+```
+
+Cache:
+
+```text
+shopverse:cache:category:list
+```
+
+TTL:
+
+```text
+600 seconds
+```
+
+---
+
+# 24. Order History Integration
+
+Modify:
+
+```text
+orderService.js
+```
+
+Cache:
+
+```text
+shopverse:cache:orders:customer:<customerId>
+```
+
+TTL:
+
+```text
+30 seconds
+```
+
+Invalidate after successful order creation.
+
+---
+
+# 25. Checkout Handling
+
+Do NOT treat `POST /api/orders` as a normal cacheable response.
+
+Instead Redis should support:
+
+- Idempotency
+- Single-flight locking
+- Temporary coordination
+- Cache invalidation
+- Stock-related coordination where appropriate
+
+Example:
+
+```text
+POST /api/orders
+      ↓
+Acquire Redis lock
+      ↓
+Validate order
+      ↓
+Check stock
+      ↓
+Create order
+      ↓
+Invalidate affected cache
+      ↓
+Release lock
+```
+
+---
+
+# 26. Cache Invalidation
+
+After successful order creation:
+
+```text
+invalidate product lists
+invalidate affected product detail
+invalidate customer order history
+invalidate categories if stock reaches zero
+```
+
+Use `SCAN` or explicit indexes rather than:
+
+```redis
+KEYS *
+```
+
+in request handlers.
+
+---
+
+# 27. TTL Policy
+
+| Data | TTL |
+|---|---:|
+| Product list | 300 sec |
+| Product detail | 120 sec |
+| Categories | 600 sec |
+| Order history | 30 sec |
+| Checkout lock | 5 sec |
+| Idempotency key | 60–300 sec |
+
+TTL is independent from adaptive utility.
+
+An entry can have high utility but must still expire when its data becomes stale.
+
+---
+
+# 28. Redis Configuration
+
+Provide:
+
+```text
+redis/redis.conf
+```
+
+Recommended development configuration:
+
+```conf
+maxmemory 150mb
+maxmemory-policy noeviction
+appendonly yes
+```
+
+The application-level adaptive controller manages admission and eviction.
+
+For baseline experiments, separate Redis instances/configurations may use:
+
+```text
+allkeys-lru
+allkeys-lfu
+```
+
+---
+
+# 29. Environment Variables
+
+Create:
+
+```text
+.env.example
+```
+
+with:
+
+```env
+PORT=5000
+
+REDIS_URL=redis://localhost:6379
+
+CACHE_MODE=adaptive
+
+CACHE_CAPACITY_MB=100
+
+CACHE_WEIGHT_LATENCY=0.6
+CACHE_WEIGHT_MONEY=0.4
+CACHE_LAMBDA=0.01
+
+CACHE_DEFAULT_TTL=300
+
+CACHE_METRICS_ENABLED=true
+
+FRONTEND_URL=http://localhost:5173
+```
+
+---
+
+# 30. Docker Requirements
+
+Provide:
+
+```text
+docker-compose.yml
+```
+
+Services:
+
+```text
+server
+client
+redis
+redisinsight
+```
+
+RedisInsight should be accessible during development.
+
+The project must support:
+
+```bash
+docker compose up -d
+```
+
+and:
+
+```bash
+npm run dev
+```
+
+according to the existing ShopVerse workflow.
+
+---
+
+# 31. Redis Monitoring
+
+The project must support real monitoring.
+
+Developers should be able to use:
+
+```bash
+redis-cli
+```
+
+and:
+
+```bash
+redis-cli INFO
+```
+
+```bash
+redis-cli DBSIZE
+```
+
+```bash
+redis-cli --stat
+```
+
+```bash
+redis-cli MONITOR
+```
+
+RedisInsight must be able to inspect:
+
+```text
+shopverse:cache:*
+shopverse:meta:*
+shopverse:utility
+shopverse:metrics:*
+shopverse:lock:*
+```
+
+---
+
+# 32. Dashboard Requirements
+
+Create:
+
+```text
+client/src/pages/CacheDashboard.jsx
+```
+
+Route:
+
+```text
+/admin/cache-dashboard
+```
+
+Dashboard sections:
+
+### Redis Health
+
+```text
+Connected
+Redis version
+Memory
+Keys
+Clients
+Uptime
+```
+
+### Cache Performance
+
+```text
+Hit Rate
+Miss Rate
+P50
+P95
+P99
+Average Redis latency
+```
+
+### Policy Comparison
+
+```text
+Adaptive
+LRU
+LFU
+GDSF
+No Cache
+```
+
+### Cost Savings
+
+Display:
+
+```text
+Cost saved
+₹ saved
+Latency saved
+Estimated hourly savings
+Estimated monthly savings
+```
+
+### Memory Allocation
+
+By:
+
+```text
+CATALOG
+SEARCH
+DETAIL
+ORDER
+```
+
+### Eviction Feed
+
+Show:
+
+```text
+key
+utility
+size
+type
+cost
+reason
+timestamp
+```
+
+### Redis Operations
+
+Show live:
+
+```text
+GET
+SET
+DEL
+HGET
+HSET
+HINCRBY
+ZADD
+ZRANGE
+ZREM
+```
+
+---
+
+# 33. Dashboard Controls
+
+Provide:
+
+```text
+Scenario:
+[ Normal ]
+[ BBD Spike ]
+[ Shift ]
+[ Cold Start ]
+
+Cache Mode:
+[ Adaptive ]
+[ LRU ]
+[ LFU ]
+[ GDSF ]
+[ No Cache ]
+
+Capacity:
+10MB ───────── 150MB
+
+Requests/sec:
+50 ───────── 1000
+
+wL:
+0 ───────── 1
+
+wM:
+0 ───────── 1
+
+λ:
+0 ───────── configurable maximum
+```
+
+Changing configuration must call:
+
+```http
+POST /api/cache/config
+```
+
+without restarting the backend.
+
+---
+
+# 34. Real-Time Dashboard Flow
+
+```text
+Redis
+  ↓
+Metrics Collector
+  ↓
+Express
+  ↓
+/api/cache/stream
+  ↓ SSE
+React Dashboard
+  ↓
+Recharts
+```
+
+The dashboard must not fabricate metrics.
+
+---
+
+# 35. Cost Advisor
+
+Implement:
+
+```text
+server/src/redis/cache/costAdvisor.js
+```
+
+Logic:
+
+```text
+preventable misses × average recomputation cost
+```
+
+Compare against simulated infrastructure cost.
+
+Example:
+
+```text
+Additional capacity:
++100MB
+
+Estimated additional savings:
+$12/hour
+
+Estimated Redis node cost:
+$0.15/hour
+
+ROI:
+80x
+
+Recommendation:
+SCALE_UP
+```
+
+This is an advisory simulation only.
+
+Do not automatically scale cloud infrastructure.
+
+---
+
+# 36. Metrics to Collect
+
+Every request should be capable of producing:
+
+```text
+requestId
+endpoint
+cacheKey
+cacheType
+cacheHit
+latency
+redisLatency
+computationLatency
+responseSize
+estimatedCost
+utility
+frequency
+timestamp
+```
+
+Aggregate:
+
+```text
+hits
+misses
+hitRate
+evictions
+admissionRejects
+expiredEntries
+redisErrors
+averageLatency
+P99
+costSaved
+latencySaved
+```
+
+---
+
+# 37. Error Handling
+
+Redis failure must not crash ShopVerse.
+
+If Redis is unavailable:
+
+```text
+Redis GET fails
+      ↓
+log error
+      ↓
+execute original service
+      ↓
+return response
+```
+
+The application should degrade gracefully to no-cache behavior.
+
+---
+
+# 38. Backward Compatibility
+
+When:
+
+```env
+CACHE_MODE=no-cache
+```
+
+the original ShopVerse behavior must remain functional.
+
+Existing endpoints must not require Redis to operate.
+
+---
+
+# 39. Security
+
+Do not expose unrestricted Redis commands through the public API.
+
+The cache API should be protected as an admin API in the application.
+
+Never expose:
+
+```text
+EVAL
+CONFIG
+SHUTDOWN
+FLUSHALL
+```
+
+directly to clients.
+
+Never accept arbitrary Redis commands from frontend users.
+
+---
+
+# 40. Testing Requirements
+
+Create tests for:
+
+### Cache
+
+```text
+GET hit
+GET miss
+SET
+DELETE
+TTL
+```
+
+### Adaptive policy
+
+```text
+utility calculation
+admission
+eviction
+frequency decay
+recency decay
+```
+
+### Redis
+
+```text
+connection
+reconnection
+Redis unavailable
+serialization
+deserialization
+```
+
+### Invalidation
+
+```text
+order creation
+product stock update
+customer order history
+```
+
+### API
+
+```text
+/api/cache/stats
+/api/cache/config
+/api/cache/entries
+/api/cache/evictions
+/api/cache/redis
+/api/cache/commands
+/api/cache/stream
+/api/cache/simulate
+/api/cache/benchmark
+```
+
+---
+
+# 41. Expected Demonstration
+
+The final demo should follow:
+
+```text
+1. Start Docker
+2. Start Redis + RedisInsight
+3. Start ShopVerse
+4. Open RedisInsight
+5. Open Cache Dashboard
+6. Run Normal scenario
+7. Show Redis GET/SET operations
+8. Run BBD Spike
+9. Show expensive search/detail keys becoming hot
+10. Show adaptive utility scores
+11. Show low-utility catalog eviction
+12. Compare Adaptive vs LRU/LFU/GDSF
+13. Show P99 improvement
+14. Show actual Redis memory
+15. Show ₹ savings
+16. Switch CACHE_MODE=no-cache
+17. Demonstrate original application still works
+```
+
+---
+
+# 42. Example Hackathon Story
+
+The presentation should explain:
+
+> "Redis normally gives us mechanisms like LRU and LFU, but those policies don't understand the business cost of a query. ShopVerse adds an application-aware intelligence layer on top of Redis. Every cache entry receives a utility score based on latency, monetary cost, frequency, size and recency. During a traffic spike, the system can evict a cheap, frequently accessed catalog response to preserve a less frequent but expensive search or recommendation response."
+
+---
+
+# 43. Success Criteria
+
+The project is complete when:
+
+- [ ] Redis is running as a real service.
+- [ ] ShopVerse connects to Redis.
+- [ ] Product list is cached.
+- [ ] Product details are cached.
+- [ ] Categories are cached.
+- [ ] Order history is cached.
+- [ ] Checkout uses Redis locks/idempotency where required.
+- [ ] Cache invalidation works.
+- [ ] Adaptive utility is implemented.
+- [ ] Admission control is implemented.
+- [ ] Adaptive eviction is implemented.
+- [ ] LRU baseline works.
+- [ ] LFU baseline works.
+- [ ] GDSF baseline works.
+- [ ] No-cache baseline works.
+- [ ] Real Redis metrics are displayed.
+- [ ] Redis command monitoring works.
+- [ ] SSE stream works.
+- [ ] Dashboard works.
+- [ ] Workload simulator works.
+- [ ] Benchmark API works.
+- [ ] RedisInsight can inspect the project.
+- [ ] Redis failure gracefully falls back to service execution.
+- [ ] Existing ShopVerse APIs continue working.
+- [ ] Docker Compose starts Redis.
+- [ ] Documentation explains the architecture.
+
+---
+
+# 44. Final Required Repository Structure
+
+```text
+ShopVerse/
+│
+├── client/
+│   └── src/
+│       ├── pages/
+│       │   └── CacheDashboard.jsx
+│       └── ...
+│
+├── server/
+│   └── src/
+│       ├── config/
+│       ├── redis/
+│       │   ├── cache/
+│       │   ├── metrics/
+│       │   └── locks/
+│       ├── controllers/
+│       ├── routes/
+│       ├── services/
+│       └── app.js
+│
+├── redis/
+│   ├── redis.conf
+│   ├── README.md
+│   └── scripts/
+│
+├── docker-compose.yml
+├── .env.example
+└── README.md
+```
+
+---
+
+# 45. Implementation Priority
+
+Implement in this order:
+
+```text
+PHASE 1
+Redis connection
+    ↓
+Redis cache wrapper
+    ↓
+Product service integration
+
+PHASE 2
+Metadata
+    ↓
+Utility engine
+    ↓
+Admission controller
+    ↓
+Adaptive eviction
+
+PHASE 3
+LRU / LFU / GDSF
+    ↓
+Benchmarking
+
+PHASE 4
+Metrics
+    ↓
+Redis monitoring
+    ↓
+SSE
+
+PHASE 5
+Simulation
+    ↓
+Dashboard
+
+PHASE 6
+Invalidation
+    ↓
+Single-flight
+    ↓
+Idempotency
+    ↓
+Testing
+```
+
+---
+
+# 46. Non-Goals
+
+This phase does NOT require:
+
+- Kubernetes autoscaling
+- Production cloud autoscaling
+- Distributed Redis Cluster
+- Redis Sentinel
+- Real payment processing changes
+- Replacing the existing database
+- Automatic infrastructure scaling
+- Caching unsafe state-changing operations
+
+These can be future phases.
+
+---
+
+# 47. Future Production Architecture
+
+For production scale:
+
+```text
+                 Load Balancer
+                      │
+        ┌─────────────┼─────────────┐
+        ▼             ▼             ▼
+    Express 1     Express 2     Express 3
+        │             │             │
+        └─────────────┼─────────────┘
+                      ▼
+               Redis Cluster
+                      │
+                      ▼
+                PostgreSQL
+```
+
+The current hackathon implementation should remain Redis-first and production-architecture-ready without requiring this infrastructure.
+
+---
+
+# 48. Final Requirement
+
+The implementation must produce a **working API-driven Redis cache system**, not merely a frontend simulation.
+
+The following must be real:
+
+```text
+Redis connection
+Redis storage
+Redis TTL
+Redis metadata
+Redis sorted sets
+Redis counters
+Redis locks
+Redis memory statistics
+Redis hit/miss statistics
+Redis command monitoring
+Cache invalidation
+Cache admission
+Cache eviction
+API endpoints
+SSE stream
+```
+
+The adaptive algorithm must be the custom contribution:
+
+```text
+Redis
+   +
+Application-Aware Utility
+   +
+Admission Control
+   +
+Cost-Aware Eviction
+   +
+Real-Time Observability
+```
+
+**Final product statement:**
+
+> **ShopVerse Adaptive Redis Cache is an application-aware caching system built on real Redis that optimizes cache memory according to computational cost rather than relying solely on traditional LRU/LFU behavior.**
