@@ -12,13 +12,13 @@ export default defineConfig(({ mode }) => {
     server: {
       // Loopback only: the dev server stays private to this machine.
       // (Set to '0.0.0.0' to expose it to the LAN for phone demos.)
-      host: '127.0.0.1',
+      host: 'localhost',
       port: 5173,
       strictPort: true,
       allowedHosts: true,
       proxy: {
         '/api': {
-          target: env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:3001',
+          target: env.VITE_API_PROXY_TARGET || 'http://localhost:3001',
           changeOrigin: true,
         },
       },

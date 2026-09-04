@@ -4,6 +4,7 @@ import { NODE_ENV } from './config.js';
 import productsRouter from './routes/products.js';
 import categoriesRouter from './routes/categories.js';
 import ordersRouter from './routes/orders.js';
+import cacheRouter from './routes/cache.js';
 
 const app = express();
 
@@ -18,6 +19,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api/products', productsRouter);
 app.use('/api/categories', categoriesRouter);
 app.use('/api/orders', ordersRouter);
+app.use('/api/cache', cacheRouter);
 
 // 404 for unknown API routes
 app.use((req, res) => {
