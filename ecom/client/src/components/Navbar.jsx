@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { useCart } from '../context/CartContext.jsx';
+import { useWishlist } from '../context/WishlistContext.jsx';
 
 export default function Navbar() {
   const { count } = useCart();
+  const { ids: wishIds } = useWishlist();
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
 
@@ -48,6 +50,26 @@ export default function Navbar() {
             aria-label="Search products"
           />
         </form>
+        <Link
+          to="/wishlist"
+          className="cart-link wish-nav-link"
+          aria-label={`Wishlist with ${wishIds.length} items`}
+        >
+          <svg
+            width="19"
+            height="19"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z" />
+          </svg>
+          {wishIds.length > 0 && <span className="cart-badge">{wishIds.length}</span>}
+        </Link>
         <Link to="/cart" className="cart-link" aria-label={`Cart with ${count} items`}>
           <svg
             width="20"

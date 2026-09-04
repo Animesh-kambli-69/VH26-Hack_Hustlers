@@ -9,8 +9,14 @@ added in a later phase** — this phase intentionally contains **no cache and no
 - Product catalog (15 products, 5 categories) with category filters, search and sorting
 - Product detail pages with ratings, stock status and related products
 - Shopping cart with quantity management (persisted in `localStorage`)
+- Wishlist (heart on every product card + product page, dedicated `/wishlist` page, persisted in `localStorage`)
 - Checkout with shipping details + payment method (mock payments: card / UPI / COD)
+- Delivery-speed choice at checkout: **standard** (free over $75, else $6.99) or **express** ($12.99)
+- Promo codes (`SAVE10`, `FLAT5`, `FREESHIP`) validated and priced **on the server**
+- Live server-side price quote (`POST /api/orders/quote`) as you pick shipping + promo at checkout
 - Order confirmation page and order history ("My orders")
+- Order tracking timeline: **confirmed → shipped → delivered** (plus a demo action to step an order forward)
+- Cancel an order while it is still `confirmed` — reserved stock is returned to the catalog
 - REST API with server-side validation, stock checks and server-side pricing
 - Free-shipping logic (free over $75, else $6.99) computed on the server
 
@@ -38,16 +44,17 @@ ecom/
 │       ├── controllers/         # request parsing / response shaping (thin)
 │       ├── services/            # business rules (cache would wrap these)
 │       ├── data/products.js     # product catalog
+│       ├── data/promoCodes.js   # promo-code definitions (server-side truth)
 │       └── db/fileDb.js         # demo JSON-file order store (DB in phase 2)
 └── client/                      # React (JSX) app
     ├── vite.config.js           # dev server + /api proxy → Express
     └── src/
-        ├── main.jsx             # entry (BrowserRouter + CartProvider)
+        ├── main.jsx             # entry (BrowserRouter + Cart/Wishlist providers)
         ├── App.jsx              # route table
         ├── api/client.js        # fetch-based API client
-        ├── context/CartContext.jsx
-        ├── components/          # Navbar, Footer, ProductCard, Stars, QuantityPicker
-        ├── pages/               # Home, Product, Cart, Checkout, OrderSuccess, Orders, NotFound
+        ├── context/             # CartContext, WishlistContext
+        ├── components/          # Navbar, Footer, ProductCard, WishlistButton, …
+        ├── pages/               # Home, Product, Cart, Checkout, OrderSuccess, Orders, Wishlist, NotFound
         └── styles.css
 ```
 
@@ -98,7 +105,10 @@ environment variables always take precedence over `.env` values.
 | GET    | `/api/products/:id`                   | Single product                               |
 | POST   | `/api/orders`                         | Place an order                               |
 | GET    | `/api/orders?customerId=`             | Orders for a customer (newest first)         |
-| GET    | `/api/orders/:id`                     | Single order                                 |
+| GET    | `/api/orders/:id`                   | Single order                                 |
+| POST   | `/api/orders/quote`                 | Server-side price quote (no side effects)    |
+| POST   | `/api/orders/:id/cancel`            | Cancel a `confirmed` order, restock items    |
+| POST   | `/api/orders/:id/advance`           | Demo: step order confirmed → shipped → delivered |
 
 ### POST /api/orders
 
@@ -116,14 +126,35 @@ Request body:
     "pincode": "400001",
     "payment": "card"
   },
-  "items": [{ "productId": 1, "qty": 2 }]
+  "items": [{ "productId": 1, "qty": 2 }],
+  "shippingMethod": "standard",   // optional: "standard" (default) | "express"
+  "promoCode": "SAVE10"           // optional: SAVE10 · FLAT5 · FREESHIP
 }
 ```
 
-Response `201`: `{ "order": { "id": "ORD-…", "total": 266.97, "status": "confirmed", … } }`
+Response `201`: `{ "order": { "id": "ORD-…", "total": 241.97, "status": "confirmed", … } }`
 
-Pricing (`subtotal`, `shipping`, `total`) is always computed on the server — the client's
-claimed prices are never trusted.
+Pricing (`subtotal`, `discount`, `shipping`, `total`) is always computed on the server — the
+client's claimed prices are never trusted. Placed orders also carry `promoCode`, `promoLabel`,
+`shippingMethod`, `deliveryEstimate` and an `events` array (a `{ status, at }` history used to
+render the tracking timeline).
+
+### Promo codes
+
+| Code       | Effect                               | Notes                  |
+| ---------- | ------------------------------------ | ---------------------- |
+| `SAVE10`   | 10% off the subtotal                 | capped at $25          |
+| `FLAT5`    | $5 off                               | subtotal must be ≥ $25 |
+| `FREESHIP` | Waives the shipping fee              | any shipping method    |
+
+Codes live in `server/src/data/promoCodes.js`; the quote endpoint reports invalid codes as
+`promoError` without failing, while placing an order with an invalid code returns `400`.
+
+### Order lifecycle
+
+Orders start as `confirmed` and move through `shipped` → `delivered`. `POST /api/orders/:id/advance`
+steps an order forward so the tracking UI can be demoed; `POST /api/orders/:id/cancel` is only
+allowed while an order is still `confirmed` and returns the reserved stock to the catalog.
 
 ## Architecture notes — preparing for phase 2 (caching & scaling)
 

@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useCart } from '../context/CartContext.jsx';
+import WishlistButton from './WishlistButton.jsx';
 import Stars from './Stars.jsx';
 import { formatPrice } from '../utils.js';
 
@@ -8,13 +9,16 @@ export default function ProductCard({ product }) {
 
   return (
     <article className="product-card">
-      <Link to={`/products/${product.id}`} className="product-card-media">
-        <img src={product.image} alt={product.name} loading="lazy" />
+      <div className="product-card-media">
+        <Link to={`/products/${product.id}`}>
+          <img src={product.image} alt={product.name} loading="lazy" />
+        </Link>
         {product.stock === 0 && <span className="badge badge-out">Out of stock</span>}
         {product.stock > 0 && product.stock <= 20 && (
           <span className="badge badge-low">Only {product.stock} left</span>
         )}
-      </Link>
+        <WishlistButton productId={product.id} />
+      </div>
       <div className="product-card-body">
         <span className="product-card-category">{product.category}</span>
         <h3 className="product-card-name">

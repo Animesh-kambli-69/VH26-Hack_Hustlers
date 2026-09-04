@@ -52,3 +52,9 @@ export function decrementStock(id, qty) {
   if (current < qty) throw new Error(`Insufficient stock for product ${id}`);
   stock.set(id, current - qty);
 }
+
+export function restock(id, qty) {
+  const current = stock.get(id);
+  if (current === undefined) throw new Error(`Unknown product ${id}`);
+  stock.set(id, current + qty);
+}

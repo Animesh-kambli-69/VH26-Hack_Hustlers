@@ -9,6 +9,16 @@ export function createOrder(req, res, next) {
   }
 }
 
+// Server-side price quote for the checkout summary — no side effects. Lets the
+// client show an accurate total for the selected shipping method + promo code.
+export function quoteOrder(req, res, next) {
+  try {
+    res.json(orderService.quoteOrder(req.body || {}));
+  } catch (err) {
+    next(err);
+  }
+}
+
 export function listOrders(req, res, next) {
   try {
     const { customerId } = req.query;
@@ -27,6 +37,25 @@ export function getOrder(req, res, next) {
     if (!order) {
       return res.status(404).json({ error: 'Order not found' });
     }
+    res.json({ order });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export function cancelOrder(req, res, next) {
+  try {
+    const order = orderService.cancelOrder(req.params.id);
+    res.json({ order });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Demo-only: advance confirmed → shipped → delivered.
+export function advanceOrder(req, res, next) {
+  try {
+    const order = orderService.advanceOrderStatus(req.params.id);
     res.json({ order });
   } catch (err) {
     next(err);

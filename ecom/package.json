@@ -12,5 +12,9 @@
   },
   "devDependencies": {
     "concurrently": "^9.0.1"
+  },
+  "dependencies": {
+    "express": "^5.2.1",
+    "vite": "^8.2.2"
   }
 }
