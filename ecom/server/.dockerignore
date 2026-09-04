@@ -1,0 +1,47 @@
+# --- Dependencies (rebuilt inside the image, never copied) ---
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Secrets (never bake into an image) ---
+.env
+.env.local
+.env.*.local
+
+# --- VCS ---
+.git/
+.gitignore
+.gitattributes
+
+# --- Runtime state (created at runtime — persist via the /app/data volume) ---
+data/orders.json
+*.db
+*.sqlite
+
+# --- Logs & temp files ---
+logs/
+*.log
+tmp/
+*.tmp
+
+# --- Editor / OS junk ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- Tests & coverage (not needed in the production image) ---
+coverage/
+.nyc_output/
+__tests__/
+test/
+tests/
+*.test.js
+*.spec.js
+
+# --- Docker files themselves ---
+Dockerfile
+.dockerignore
