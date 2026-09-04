@@ -1,8 +1,15 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useCart } from '../context/CartContext.jsx';
 import { formatPrice, getCustomerId } from '../utils.js';
+
+// Display-only copy — every number is recomputed server-side by the quote
+// endpoint and again at order creation. Shipping options mirror the backend.
+const SHIPPING_OPTIONS = [
+  { id: 'standard', label: '🚚 Standard', desc: '5–7 business days · free over $75, else $6.99' },
+  { id: 'express', label: '⚡ Express', desc: '2–3 business days · $12.99 flat' },
+];
 
 const PAYMENTS = [
   { id: 'card', label: '💳 Card' },
@@ -13,6 +20,7 @@ const PAYMENTS = [
 export default function CheckoutPage() {
   const { items, subtotal, clear } = useCart();
   const navigate = useNavigate();
+
   const [form, setForm] = useState({
     name: '',
     email: '',
@@ -22,8 +30,44 @@ export default function CheckoutPage() {
     pincode: '',
     payment: 'card',
   });
+  const [shippingMethod, setShippingMethod] = useState('standard');
+  const [promoInput, setPromoInput] = useState('');
+  const [appliedPromo, setAppliedPromo] = useState(null);
+  const [quote, setQuote] = useState(null);
+  const [quoteError, setQuoteError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const requestedQuote = useRef('');
+
+  // Ask the server for an accurate total whenever the cart, shipping method
+  // or applied promo code changes.
+  useEffect(() => {
+    if (items.length === 0) return;
+    let cancelled = false;
+    const payload = {
+      items: items.map((i) => ({ productId: i.productId, qty: i.qty })),
+      shippingMethod,
+      promoCode: appliedPromo || undefined,
+    };
+    requestedQuote.current = shippingMethod + (appliedPromo || '');
+    api
+      .quoteOrder(payload)
+      .then((q) => {
+        if (!cancelled) {
+          setQuote(q);
+          setQuoteError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setQuoteError(err.message);
+          setQuote(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [items, shippingMethod, appliedPromo]);
 
   if (items.length === 0) {
     return (
@@ -38,8 +82,23 @@ export default function CheckoutPage() {
     );
   }
 
-  const shipping = subtotal >= 75 ? 0 : 6.99;
+  const quoted = quote && requestedQuote.current === shippingMethod + (appliedPromo || '');
+  const summary = quoted
+    ? quote
+    : { subtotal, discount: 0, shipping: 0, total: subtotal, deliveryEstimate: null };
+
   const update = (field) => (e) => setForm((f) => ({ ...f, [field]: e.target.value }));
+
+  const applyPromo = () => {
+    const code = promoInput.trim().toUpperCase();
+    if (!code) return;
+    setAppliedPromo(code);
+  };
+
+  const removePromo = () => {
+    setAppliedPromo(null);
+    setPromoInput('');
+  };
 
   const onSubmit = async (e) => {
     e.preventDefault();
@@ -50,6 +109,8 @@ export default function CheckoutPage() {
         customerId: getCustomerId(),
         customer: form,
         items: items.map((i) => ({ productId: i.productId, qty: i.qty })),
+        shippingMethod,
+        promoCode: appliedPromo || undefined,
       });
       clear();
       navigate(`/order-success/${res.order.id}`);
@@ -58,6 +119,8 @@ export default function CheckoutPage() {
       setSubmitting(false);
     }
   };
+
+  const standardFee = subtotal >= 75 ? 0 : 6.99;
 
   return (
     <div className="checkout-layout">
@@ -91,6 +154,63 @@ export default function CheckoutPage() {
           </div>
         </div>
 
+        <h2 className="section-subtitle">Delivery speed</h2>
+        <div className="radio-row">
+          {SHIPPING_OPTIONS.map((m) => {
+            const fee = m.id === 'standard' ? standardFee : 12.99;
+            return (
+              <label
+                key={m.id}
+                className={`radio-option ${shippingMethod === m.id ? 'selected' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="shippingMethod"
+                  value={m.id}
+                  checked={shippingMethod === m.id}
+                  onChange={() => setShippingMethod(m.id)}
+                />
+                <span className="ship-option">
+                  <strong>{m.label}</strong>
+                  <small>
+                    {m.desc} · {fee === 0 ? 'Free' : formatPrice(fee)}
+                  </small>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+
+        <h2 className="section-subtitle">Promo code</h2>
+        <div className="promo-row">
+          <input
+            value={promoInput}
+            onChange={(e) => setPromoInput(e.target.value)}
+            placeholder="e.g. SAVE10"
+            aria-label="Promo code"
+          />
+          {appliedPromo ? (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={removePromo}>
+              Remove
+            </button>
+          ) : (
+            <button type="button" className="btn btn-primary btn-sm" onClick={applyPromo} disabled={!promoInput.trim()}>
+              Apply
+            </button>
+          )}
+        </div>
+        {appliedPromo && quoted && quote.promoError && (
+          <p className="promo-feedback promo-error">{quote.promoError}</p>
+        )}
+        {appliedPromo && quoted && quote.promoCode && !quote.promoError && (
+          <p className="promo-feedback promo-ok">
+            ✓ {quote.promoLabel} applied — you save {formatPrice(quote.discount)}
+          </p>
+        )}
+        {!appliedPromo && (
+          <p className="promo-hint">Try <strong>SAVE10</strong> (10% off), <strong>FLAT5</strong> ($5 off $25+) or <strong>FREESHIP</strong>.</p>
+        )}
+
         <h2 className="section-subtitle">Payment method</h2>
         <div className="radio-row">
           {PAYMENTS.map((p) => (
@@ -107,8 +227,8 @@ export default function CheckoutPage() {
           ))}
         </div>
 
-        <button type="submit" className="btn btn-primary btn-block" disabled={submitting}>
-          {submitting ? 'Placing order…' : `Place order — ${formatPrice(subtotal + shipping)}`}
+        <button type="submit" className="btn btn-primary btn-block" disabled={submitting || !quoted || (appliedPromo && quote.promoError)}>
+          {submitting ? 'Placing order…' : `Place order — ${formatPrice(summary.total)}`}
         </button>
       </form>
 
@@ -126,16 +246,27 @@ export default function CheckoutPage() {
         </div>
         <div className="summary-row summary-spaced">
           <span>Subtotal</span>
-          <span>{formatPrice(subtotal)}</span>
+          <span>{formatPrice(summary.subtotal)}</span>
+        </div>
+        {summary.discount > 0 && (
+          <div className="summary-row discount">
+            <span>Promo {summary.promoCode ? `(${summary.promoCode})` : ''}</span>
+            <span>−{formatPrice(summary.discount)}</span>
+          </div>
+        )}
+        <div className="summary-row">
+          <span>Shipping ({shippingMethod})</span>
+          <span>{quoted ? (summary.shipping === 0 ? 'Free' : formatPrice(summary.shipping)) : '…'}</span>
         </div>
         <div className="summary-row">
-          <span>Shipping</span>
-          <span>{shipping === 0 ? 'Free' : formatPrice(shipping)}</span>
+          <span>Estimated delivery</span>
+          <span>{quoted && summary.deliveryEstimate ? `by ${summary.deliveryEstimate}` : '…'}</span>
         </div>
         <div className="summary-row total">
           <span>Total</span>
-          <span>{formatPrice(subtotal + shipping)}</span>
+          <span>{quoted ? formatPrice(summary.total) : '…'}</span>
         </div>
+        <p className="summary-note">Prices are confirmed on the server when you place the order.</p>
       </aside>
     </div>
   );

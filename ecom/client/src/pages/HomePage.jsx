@@ -51,6 +51,7 @@ export default function HomePage() {
   return (
     <>
       {!search && (
+        <>
         <section className="hero">
           <h1>Everything you need, delivered fast.</h1>
           <p>
@@ -63,6 +64,14 @@ export default function HomePage() {
             Shop the catalog ↓
           </button>
         </section>
+        <div className="promo-strip">
+          <span>🎉 Launch offers — apply at checkout:</span>
+          <span className="promo-code-chip">SAVE10</span>
+          <span className="promo-code-chip">FLAT5</span>
+          <span className="promo-code-chip">FREESHIP</span>
+          <span className="promo-strip-note">Express delivery available · free shipping over $75</span>
+        </div>
+        </>
       )}
 
       <section id="catalog">

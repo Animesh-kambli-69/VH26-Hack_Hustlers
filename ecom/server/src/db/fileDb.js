@@ -34,4 +34,15 @@ export const fileDb = {
     writeAll(orders);
     return order;
   },
+  // Applies `mutate(order)` to the stored order with `id` and persists it.
+  // Returns the updated order, or null when no such order exists.
+  update: (id, mutate) => {
+    const orders = readAll();
+    const index = orders.findIndex((o) => o.id === id);
+    if (index === -1) return null;
+    const updated = mutate(orders[index]);
+    orders[index] = updated;
+    writeAll(orders);
+    return updated;
+  },
 };

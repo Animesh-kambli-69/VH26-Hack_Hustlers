@@ -4,6 +4,7 @@ import { api } from '../api/client.js';
 import { useCart } from '../context/CartContext.jsx';
 import QuantityPicker from '../components/QuantityPicker.jsx';
 import Stars from '../components/Stars.jsx';
+import WishlistButton from '../components/WishlistButton.jsx';
 import ProductCard from '../components/ProductCard.jsx';
 import { formatPrice } from '../utils.js';
 
@@ -102,6 +103,7 @@ export default function ProductPage() {
             <button className="btn btn-primary" disabled={product.stock === 0} onClick={handleAdd}>
               {added ? 'Added ✓' : 'Add to cart'}
             </button>
+            <WishlistButton variant="text" productId={product.id} />
           </div>
           <div className="meta-row">
             <span>✓ Free shipping over $75</span>

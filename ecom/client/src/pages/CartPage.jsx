@@ -56,7 +56,7 @@ export default function CartPage() {
           <span>{formatPrice(subtotal)}</span>
         </div>
         <div className="summary-row">
-          <span>Shipping</span>
+          <span>Shipping (standard)</span>
           <span>{shipping === 0 ? 'Free' : formatPrice(shipping)}</span>
         </div>
         <div className="summary-row total">
@@ -66,6 +66,9 @@ export default function CartPage() {
         <Link to="/checkout" className="btn btn-primary">
           Proceed to checkout
         </Link>
+        <p className="summary-note">
+          Pick express delivery and promo codes (SAVE10, FREESHIP…) at checkout.
+        </p>
       </aside>
     </div>
   );

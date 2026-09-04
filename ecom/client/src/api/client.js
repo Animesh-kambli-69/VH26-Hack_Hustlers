@@ -26,8 +26,12 @@ export const api = {
   },
   getProduct: (id) => request(`/products/${id}`),
   getCategories: () => request('/categories'),
+  // Server-side price quote (shipping method + promo code) with no side effects.
+  quoteOrder: (payload) => request('/orders/quote', { method: 'POST', body: JSON.stringify(payload) }),
   createOrder: (payload) =>
     request('/orders', { method: 'POST', body: JSON.stringify(payload) }),
+  cancelOrder: (id) => request(`/orders/${id}/cancel`, { method: 'POST' }),
+  advanceOrder: (id) => request(`/orders/${id}/advance`, { method: 'POST' }),
   getOrders: (customerId) => request(`/orders?customerId=${encodeURIComponent(customerId)}`),
   getOrder: (id) => request(`/orders/${id}`),
 };

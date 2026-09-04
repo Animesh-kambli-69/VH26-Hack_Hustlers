@@ -10,7 +10,9 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     server: {
-      host: '0.0.0.0',
+      // Loopback only: the dev server stays private to this machine.
+      // (Set to '0.0.0.0' to expose it to the LAN for phone demos.)
+      host: '127.0.0.1',
       port: 5173,
       strictPort: true,
       allowedHosts: true,
