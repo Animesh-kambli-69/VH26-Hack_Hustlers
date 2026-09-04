@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ShopVerse Phase 2 — Adaptive Cache Flowchart</title>
+<style>
+  :root {
+    --ink: #0f172a;
+    --muted: #64748b;
+    --line: #e2e8f0;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 20px 64px;
+    background: #f1f5f9;
+    color: var(--ink);
+    font: 14px/1.45 -apple-system, "Segoe UI", Inter, Roboto, system-ui, sans-serif;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+
+  /* ---------- header ---------- */
+  header { margin-bottom: 18px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 12px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--line); background: #fff;
+    border-radius: 99px; padding: 3px 10px; font-size: 12px;
+  }
+  .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+  /* ---------- panels ---------- */
+  .panel {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px 22px 22px;
+    margin: 20px auto;
+    box-shadow: 0 1px 2px rgba(15,23,42,.05);
+    max-width: 1080px;
+  }
+  .panel > h2 {
+    font-size: 13px; letter-spacing: .09em; text-transform: uppercase;
+    color: #475569; margin: 0 0 4px; display: flex; align-items: center; gap: 8px;
+  }
+  .pnum {
+    background: #0f172a; color: #fff; border-radius: 6px;
+    padding: 2px 7px; font-size: 11px; letter-spacing: 0;
+  }
+  .pdesc { color: var(--muted); font-size: 12.5px; margin: 0 0 14px; }
+
+  /* ---------- nodes ---------- */
+  .node {
+    border-radius: 10px; border: 1.5px solid;
+    padding: 8px 14px 9px; width: 100%;
+  }
+  .node .t { font-weight: 650; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  .node .d { font-size: 12px; color: #475569; margin-top: 2px; }
+  .mono, .node .d code, .k { font-family: var(--mono); }
+  code, .k {
+    background: rgba(15,23,42,.06); border-radius: 4px;
+    padding: 0 4px; font-size: 11px;
+  }
+  .muted { color: var(--muted); }
+  .small { font-size: 11.5px; }
+  ul.tight { margin: 4px 0 0; padding-left: 18px; }
+  ul.tight li { margin: 1px 0; font-size: 12px; }
+  .row { display: flex; gap: 12px; align-items: stretch; }
+  .row > .node { flex: 1; }
+  .narrow { max-width: 100%; }
+
+  /* layer colors */
+  .c-client { border-color:#93c5fd; background:#eff6ff; } .c-client .t{ color:#1d4ed8; }
+  .c-net    { border-color:#a5b4fc; background:#eef2ff; } .c-net    .t{ color:#4338ca; }
+  .c-plumb  { border-color:#94a3b8; background:#f8fafc; } .c-plumb  .t{ color:#334155; }
+  .c-cache  { border-color:#c4b5fd; background:#f5f3ff; } .c-cache  .t{ color:#6d28d9; }
+  .c-svc    { border-color:#5eead4; background:#f0fdfa; } .c-svc    .t{ color:#0f766e; }
+  .c-data   { border-color:#fcd34d; background:#fffbeb; } .c-data   .t{ color:#b45309; }
+  .c-dash   { border-color:#fda4af; background:#fff1f2; } .c-dash   .t{ color:#be123c; }
+  .c-flow   { border-color:#cbd5e1; background:#fff; }    .c-flow   .t{ color:#334155; }
+  .c-new    { border-style:dashed; }
+
+  .pill {
+    font-size: 9px; font-weight: 700; letter-spacing: .05em;
+    background: #6d28d9; color: #fff; border-radius: 99px; padding: 1px 7px;
+    text-transform: uppercase; white-space: nowrap;
+  }
+  .pill.g { background: #059669; }
+  .pill.o { background: #ea580c; }
+  .pill.s { background: #475569; }
+
+  /* arrows */
+  .arrow { text-align: center; line-height: 0; padding: 2px 0; }
+  .arrow svg { display: inline-block; vertical-align: top; }
+  .alabel { font-size: 10.5px; color: var(--muted); line-height: 1.2; }
+  .step { text-align: center; margin: 1px auto 3px; }
+
+  /* decision text inside a node */
+  .flowlist { margin: 6px 0 0; padding: 0; list-style: none; }
+  .flowlist li {
+    display: flex; gap: 8px; align-items: baseline;
+    border-top: 1px dashed #e2e8f0; padding: 4px 0;
+  }
+  .flowlist li:first-child { border-top: 0; }
+  .stepno {
+    flex: none; width: 20px; height: 20px; border-radius: 50%;
+    background: #0f172a; color: #fff; font-size: 11px;
+    display: inline-flex; align-items: center; justify-content: center;
+    transform: translateY(2px);
+  }
+  .hi { background: #7c3aed; }
+
+  /* table */
+  table { border-collapse: collapse; width: 100%; font-size: 11.5px; }
+  th, td { border: 1px solid #e2e8f0; padding: 5px 8px; text-align: left; vertical-align: top; }
+  th { background: #f8fafc; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; color: #475569; }
+  td code { background: none; padding: 0; }
+  .swatch { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:5px; }
+  .sw.cat{ background:#06b6d4; } .sw.sea{ background:#f59e0b; }
+  .sw.det{ background:#8b5cf6; } .sw.ord{ background:#f97316; }
+
+  .note {
+    background:#fffbeb; border:1px solid #fde68a; border-radius:10px;
+    padding:10px 14px; font-size:12.5px; margin-top:14px;
+  }
+  .note b { color:#92400e; }
+  .note ul { margin:6px 0 0; padding-left:20px; }
+  .note li { margin:2px 0; }
+  .gap { height: 2px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>ShopVerse — Phase 2 Adaptive Cache: How It Flows</h1>
+  <p class="sub">
+    Drawn from <code>PRD.md</code> v2.0.0 mapped onto the real repo (<code>ecom/server/src</code>, <code>ecom/client/src</code>).
+    Purple boxes = new in Phase 2. Dashed borders = new files/routes/pages.
+  </p>
+  <div class="legend">
+    <span class="chip"><span class="dot" style="background:#60a5fa"></span> Client (React)</span>
+    <span class="chip"><span class="dot" style="background:#818cf8"></span> Vite proxy / network</span>
+    <span class="chip"><span class="dot" style="background:#94a3b8"></span> Express plumbing (app · routes · controllers)</span>
+    <span class="chip"><span class="dot" style="background:#8b5cf6"></span> <b>Adaptive Cache Engine (new)</b></span>
+    <span class="chip"><span class="dot" style="background:#2dd4bf"></span> Services</span>
+    <span class="chip"><span class="dot" style="background:#fbbf24"></span> Data layer</span>
+    <span class="chip"><span class="dot" style="background:#fb7185"></span> Dashboard (new)</span>
+  </div>
+</header>
+
+<!-- =============================== PANEL 1 =============================== -->
+<section class="panel">
+  <h2><span class="pnum">1</span> System layout — where the cache engine slots in</h2>
+  <p class="pdesc">Read calls flow down the spine. The cache wraps <i>services</i>, never routes/controllers, so layers stay clean.</p>
+
+  <div class="node c-client">
+    <div class="t">React SPA (React Router) — <code>client/src/App.jsx</code> routes
+      <span class="pill g">NEW</span></div>
+    <div class="d">
+      <code>/</code> Home (catalog + search + sort) · <code>/products/:id</code> Product (detail + related) ·
+      <code>/cart</code> · <code>/checkout</code> · <code>/orders</code> · <code>/wishlist</code>
+      — plus <b><code>/admin/cache-dashboard</code></b> CacheDashboard page (Recharts + SSE). All fetching via one file: <code>api/client.js</code>.
+    </div>
+  </div>
+
+  <div class="arrow"><svg width="16" height="18"><path d="M8 0 v12 m0 0 l-5 -5 m5 5 l5 -5" stroke="#94a3b8" stroke-width="2" fill="none"/></svg></div>
+
+  <div class="node c-net">
+    <div class="t">Vite dev proxy — <code>client/vite.config.js</code></div>
+    <div class="d">forwards every <code>/api/*</code> request to the Express API at <code>127.0.0.1:3001</code> (same-origin, no CORS).</div>
+  </div>
+
+  <div class="arrow"><svg width="16" height="18"><path d="M8 0 v12 m0 0 l-5 -5 m5 5 l5 -5" stroke="#94a3b8" stroke-width="2" fill="none"/></svg></div>
+
+  <div class="node c-plumb">
+    <div class="t">Express app — <code>server/src/app.js</code> + <code>index.js</code></div>
+    <div class="d">JSON body parser · morgan logging · <code>GET /api/health</code> · mounts 3 routers (<code>/api/products</code>, <code>/api/categories</code>, <code>/api/orders</code>) ·
+      central error handler → 404 handler.</div>
+  </div>
+
+  <div class="arrow"><svg width="16" height="18"><path d="M8 0 v12 m0 0 l-5 -5 m5 5 l5 -5" stroke="#94a3b8" stroke-width="2" fill="none"/></svg></div>
+
+  <div class="node c-plumb">
+    <div class="t">Routes (thin) — <code>routes/products.js · categories.js · orders.js</code>
+      <span class="pill g">NEW</span></div>
+    <div class="d">
+      URL → controller mapping only, plus a new <b><code>routes/cache.js</code></b> mounted at <code>/api/cache</code>:
+      <code>GET /stats</code> · <code>POST /config</code> · <code>GET /stream</code> (SSE) · <code>POST /simulate</code>.
+    </div>
+  </div>
+
+  <div class="arrow"><svg width="16" height="18"><path d="M8 0 v12 m0 0 l-5 -5 m5 5 l5 -5" stroke="#94a3b8" stroke-width="2" fill="none"/></svg></div>
+
+  <div class="node c-plumb">
+    <div class="t">Controllers (thin) — <code>controllers/productController.js · orderController.js</code></div>
+    <div class="d">Parse the request (<code>req.query</code>, <code>req.params</code>, <code>req.body</code>), call one service function, shape the JSON. No business logic → untouched by Phase 2.</div>
+  </div>
+
+  <div class="arrow"><svg width="16" height="18"><path d="M8 0 v12 m0 0 l-5 -5 m5 5 l5 -5" stroke="#94a3b8" stroke-width="2" fill="none"/></svg></div>
+
+  <div class="node c-cache c-new">
+    <div class="t">🧠 Adaptive Cache Engine — <code>services/cache/</code> (all new)
+      <span class="pill">NEW</span> <span class="pill o">CACHE_INSERTION_POINT</span></div>
+    <div class="d">
+      Wraps every <i>read</i> service function with <code>cache.get(key)</code> → hit? serve : compute + <code>cache.set(key, value, meta)</code>.
+      Inside the engine:
+    </div>
+    <ul class="tight">
+      <li><b>Utility Engine</b> — scores every entry: <code>U = ((Ĉ<sub>lat</sub>·wL + Ĉ<sub>$</sub>·wM)·log(1+F)) / S · e<sup>−λΔt</sup></code></li>
+      <li><b>Store + min-heap</b> (lazy deletion) — re-pick eviction victim in O(log N), never O(N)</li>
+      <li><b>Policies</b> — <code>adaptive</code> (default) · <code>lru</code> · <code>lfu</code> · <code>gdsf</code> · <code>no-cache</code>, switchable live via env <code>CACHE_MODE</code></li>
+      <li><b>Admission filter</b> (S3-FIFO style) — reject one-hit wonders; keeps cold-start clean</li>
+      <li><b>Single-flight lock</b> — one compute per concurrent duplicate miss (checkout spike)</li>
+      <li><b>Cost Advisor</b> (<code>costAdvisor.js</code>) — simulated auto-scaler ROI, emits a recommendation</li>
+      <li><b>Eviction events</b> → published to <code>/api/cache/stream</code> (dashboard feed)</li>
+    </ul>
+  </div>
+
+  <div class="arrow"><svg width="16" height="18"><path d="M8 0 v12 m0 0 l-5 -5 m5 5 l5 -5" stroke="#94a3b8" stroke-width="2" fill="none"/></svg></div>
+
+  <div class="node c-svc">
+    <div class="t">Services (business rules — the functions the cache wraps)</div>
+    <div class="d"><code>productService.js</code>: <code>listProducts</code> · <code>getProduct</code> · <code>listCategories</code> · <code>decrementStock</code> · <code>restock</code>
+      &nbsp;|&nbsp; <code>orderService.js</code>: <code>createOrder</code> · <code>quoteOrder</code> · <code>listOrders</code> · <code>getOrder</code> · <code>cancelOrder</code> · <code>advanceOrderStatus</code></div>
+  </div>
+
+  <div class="arrow"><svg width="16" height="18"><path d="M8 0 v12 m0 0 l-5 -5 m5 5 l5 -5" stroke="#94a3b8" stroke-width="2" fill="none"/></svg></div>
+
+  <div class="node c-data">
+    <div class="t">Data layer</div>
+    <div class="d">
+      <code>data/products.js</code> — 15 in-memory products, 5 categories &nbsp;·&nbsp;
+      <code>db/fileDb.js</code> — JSON-file order store (demo-only, swap for a real DB before scaling) &nbsp;·&nbsp;
+      <code>data/promoCodes.js</code> — server-side promo truth
+    </div>
+  </div>
+
+  <div class="note">
+    <b>📌 How to read this repo vs the PRD:</b>
+    <ul>
+      <li>The PRD's <code>categoryService.js</code> does <b>not exist yet</b> — category listing lives in <code>productService.listCategories</code> (<code>routes/categories.js → productController</code>). Wrap the real function.</li>
+      <li>"Detail + related" is <b>two HTTP calls today</b>: <code>GET /api/products/:id</code> and a second <code>GET /api/products?category=…</code> fired by <code>ProductPage.jsx</code>. The 80–150 ms "related-products computation" is a Phase-2 <i>model</i>, not current server work.</li>
+      <li>The PRD's phase-1 stack says Express 4 / Vite 5; the repo currently resolves <code>express ^5</code> and <code>vite ^8</code>. Cosmetic drift — the cache design is unaffected.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- =============================== PANEL 2 =============================== -->
+<section class="panel">
+  <h2><span class="pnum">2</span> Read path — what the cache does on every GET</h2>
+  <p class="pdesc">Same skeleton for catalog, detail, categories and order history — only the key, cost metadata and TTL change (see panel 5).</p>
+
+  <div class="node c-client">
+    <div class="t">Request arrives, e.g. <code>GET /api/products?search=iphone&amp;sort=price-asc</code> or <code>GET /api/products/1</code></div>
+  </div>
+
+  <div class="arrow"><svg width="16" height="18"><path d="M8 0 v12 m0 0 l-5 -5 m5 5 l5 -5" stroke="#94a3b8" stroke-width="2" fill="none"/></svg></div>
+
+  <div class="node c-svc">
+    <div class="t">1 · Build the cache key <span class="pill s">service entry fn</span></div>
+    <ul class="tight">
+      <li><code>products:list:{category}:{search}:{sort}</code> — one entry per distinct query shape</li>
+      <li><code>product:detail:{id}</code> · <code>categories:list</code> · <code>orders:customer:{customerId}</code></li>
+    </ul>
+  </div>
+
+  <div class="arrow"><svg width="16" height="18"><path d="M8 0 v12 m0 0 l-5 -5 m5 5 l5 -5" stroke="#94a3b8" stroke-width="2" fill="none"/></svg></div>
+
+  <div class="node c-cache">
+    <div class="t">2 · <code>cache.get(key)</code> — is it in the store <b>and</b> not TTL-expired?</div>
+    <div class="d">Every lookup also bumps bookkeeping in O(1): <code>freq = freq·0.99 + 1</code> (decayed frequency, stops hot keys from exploding the score) and refreshes <code>lastAccess</code>. Utility is re-derived lazily via the heap, not a full scan — total overhead target &lt; 2 ms.</div>
+  </div>
+
+  <div class="row">
+    <div class="node c-flow" style="border-color:#16a34a; background:#f0fdf4;">
+      <div class="t" style="color:#15803d;">✅ HIT</div>
+      <ul class="tight">
+        <li>Serve the stored payload (≈5 ms)</li>
+        <li>Record metric: <b>hit</b>, latency saved = <code>costLatency</code>, ₹ saved</li>
+        <li>Heap re-ranks the entry upward (it got hotter)</li>
+      </ul>
+    </div>
+    <div class="node c-flow" style="border-color:#dc2626; background:#fef2f2;">
+      <div class="t" style="color:#b91c1c;">❌ MISS (or expired)</div>
+      <ul class="tight">
+        <li>3 · Take the <b>single-flight lock</b> for this key (duplicates share one compute)</li>
+        <li>4 · Run the real service fn — e.g. <code>productService.listProducts</code> scans/filters/sorts, or <code>orderService.listOrders</code> reads fileDb</li>
+        <li>5 · <b>Admission filter</b>: worth caching? First-timers / one-hit-wonder searches are skipped (cold-start scenario stays clean)</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="arrow"><svg width="16" height="18"><path d="M8 0 v12 m0 0 l-5 -5 m5 5 l5 -5" stroke="#94a3b8" stroke-width="2" fill="none"/></svg></div>
+
+  <div class="node c-cache">
+    <div class="t">6 · <code>cache.set(key, value, meta)</code> — admit the entry <span class="pill s">miss path only</span></div>
+    <ul class="tight">
+      <li>Entry = <code>{ key, value, sizeMB, costLatency, costMoney, freq, lastAccess, type, utility, expiresAt }</code></li>
+      <li>While inserting: if total &gt; capacity, pop the min-utility victim off the heap → <b>eviction event</b> <code>{key, U, type, sizeMB, cost}</code> → SSE stream</li>
+      <li>Adaptive keeps expensive entries (SEARCH/DETAIL/ORDER) and evicts cheap CATALOG first — LRU/LFU evict purely by recency/frequency and drop the expensive ones.</li>
+    </ul>
+  </div>
+
+  <div class="arrow"><svg width="16" height="18"><path d="M8 0 v12 m0 0 l-5 -5 m5 5 l5 -5" stroke="#94a3b8" stroke-width="2" fill="none"/></svg></div>
+
+  <div class="node c-dash">
+    <div class="t">Respond to the client — and stream one metric line to the dashboard</div>
+    <div class="d">hit/miss per policy, latency saved (s), ₹ saved (×83), P99 sample (<code>hit ? 5ms : costLatency</code>), memory by type → <code>GET /api/cache/stream</code> (SSE).</div>
+  </div>
+</section>
+
+<!-- =============================== PANEL 3 =============================== -->
+<section class="panel">
+  <h2><span class="pnum">3</span> Write path — checkout never hits cache, but it pulls the trigger on invalidation</h2>
+  <p class="pdesc"><code>POST /api/orders</code> is the most expensive call (~400–800 ms model) and mutates stock, so it is deliberately <b>not cached</b> — it <i>invalidates</i>.</p>
+
+  <div class="node c-client">
+    <div class="t">CheckoutPage → <code>api.createOrder({ customerId, customer, items, shippingMethod, promoCode })</code></div>
+  </div>
+
+  <div class="arrow"><svg width="16" height="18"><path d="M8 0 v12 m0 0 l-5 -5 m5 5 l5 -5" stroke="#94a3b8" stroke-width="2" fill="none"/></svg></div>
+
+  <div class="node c-svc">
+    <div class="t"><code>orderService.createOrder</code> — the 6 steps (unchanged from Phase 1)</div>
+    <ol class="tight" style="margin-top:6px">
+      <li>validate customer (name / email)</li>
+      <li>resolve items — each <code>productId</code> looked up via <code>productService.getProduct</code>, qty validated</li>
+      <li>stock check on every line → 409 if short</li>
+      <li><code>decrementStock(id, qty)</code> — in-memory <code>Map</code> overlay in productService</li>
+      <li>server-side pricing — shipping method + promo codes (<code>computePricing</code>), client prices never trusted</li>
+      <li><code>fileDb.push(order)</code> → order <code>ORD-…</code> with events history, status <code>confirmed</code></li>
+    </ol>
+  </div>
+
+  <div class="arrow"><svg width="16" height="18"><path d="M8 0 v12 m0 0 l-5 -5 m5 5 l5 -5" stroke="#94a3b8" stroke-width="2" fill="none"/></svg></div>
+
+  <div class="node c-cache">
+    <div class="t">🔥 Invalidate — <code>cache.invalidate(pattern)</code> <span class="pill o">NEW — the consistency half of the engine</span></div>
+    <ul class="tight">
+      <li><code>products:list:*</code> — stock numbers changed, every catalog/search listing is stale</li>
+      <li><code>product:detail:{each purchased productId}</code></li>
+      <li><code>orders:customer:{customerId}</code> — order history changed</li>
+      <li><code>categories:list</code> — only if a product's stock hit 0 (PRD rule; catalog is static otherwise)</li>
+    </ul>
+    <div class="d small muted" style="margin-top:6px">
+      Other mutators re-use the same hook: <code>cancelOrder</code> (restocks → same product keys) and
+      <code>advanceOrderStatus</code> (order state changed → <code>orders:customer:*</code>, <code>orders:id:*</code>).
+      <code>quoteOrder</code> is side-effect-free and stays uncached (prices must stay server-truth).
+    </div>
+  </div>
+
+  <div class="arrow"><svg width="16" height="18"><path d="M8 0 v12 m0 0 l-5 -5 m5 5 l5 -5" stroke="#94a3b8" stroke-width="2" fill="none"/></svg></div>
+
+  <div class="node c-client">
+    <div class="t"><code>201 { order }</code> → OrderSuccessPage — then <code>GET /api/orders/:id</code> and <code>GET /api/orders?customerId=…</code> re-read fresh from the cache (just invalidated, so they recompute once, then re-cache).</div>
+  </div>
+</section>
+
+<!-- =============================== PANEL 4 =============================== -->
+<section class="panel">
+  <h2><span class="pnum">4</span> Observability loop — simulator, SSE stream, dashboard</h2>
+  <p class="pdesc">All of this is for demo/benchmark, never real shoppers. Requests come from a workload generator, metrics come back over SSE.</p>
+
+  <div class="row">
+    <div class="node c-dash c-new">
+      <div class="t">Dashboard controls → <code>POST /api/cache/config</code> + <code>POST /api/cache/simulate</code></div>
+      <ul class="tight">
+        <li>Scenario: <b>Normal</b> · <b>BBD Spike</b> · <b>Diwali→Christmas Shift</b> · <b>Cold Start</b></li>
+        <li>Weight sliders: <code>wL</code> (latency), <code>wM</code> (money), <code>λ</code> (recency decay) — applied live, no restart</li>
+        <li>Capacity 10–150 MB · req/s 50–1000</li>
+      </ul>
+    </div>
+    <div class="node c-cache">
+      <div class="t">Workload Generator — <code>services/cache/workloadGenerator.js</code> (new)</div>
+      <ul class="tight">
+        <li><b>Zipfian</b> key popularity (α≈1.2 → 20% of products get 80% of views) + <b>Poisson</b> arrivals</li>
+        <li>Traffic mix: 60% browsing · 20% search · 15% detail · 5% checkout</li>
+        <li><b>BBD Spike</b> = 10× burst aimed at iPhone (<code>product:detail:1</code> + <code>search=iphone</code>) — 70% expensive keys, the exact case where LRU drops the wrong entries</li>
+        <li>Generated requests re-enter the read path (panel 2) and are metered per policy</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="arrow"><svg width="16" height="18"><path d="M8 0 v12 m0 0 l-5 -5 m5 5 l5 -5" stroke="#94a3b8" stroke-width="2" fill="none"/></svg></div>
+
+  <div class="node c-cache">
+    <div class="t">Cache engine → <code>GET /api/cache/stream</code> — SSE pushes JSON metric frames every tick</div>
+    <div class="d">Adaptive and LRU/LFU/GDSF/No-Cache all run side-by-side on the same synthetic traffic so the dashboard can compare them honestly.</div>
+  </div>
+
+  <div class="arrow"><svg width="16" height="18"><path d="M8 0 v12 m0 0 l-5 -5 m5 5 l5 -5" stroke="#94a3b8" stroke-width="2" fill="none"/></svg></div>
+
+  <div class="node c-dash c-new">
+    <div class="t">CacheDashboard.jsx — <code>/admin/cache-dashboard</code> (Recharts; route added in <code>App.jsx</code>)</div>
+    <ul class="tight">
+      <li><b>Hit-rate %</b> — Adaptive vs LRU vs LFU vs GDSF vs No-Cache. Adaptive should pull ahead during the BBD spike</li>
+      <li><b>₹ / latency saved</b> — cumulative, $ → ₹ ×83, e.g. "₹7.2L/month per 50MB node"</li>
+      <li><b>Memory by type</b> — stacked bars:
+        <span class="swatch sw cat"></span>CATALOG cyan · <span class="swatch sw sea"></span>SEARCH amber · <span class="swatch sw det"></span>DETAIL purple · <span class="swatch sw ord"></span>ORDER orange — Adaptive should look purple/amber, LRU mostly cyan</li>
+      <li><b>Eviction feed</b> — <code>{key, U, type, sizeMB, cost}</code>; watch cheap CATALOG leave before expensive SEARCH/DETAIL</li>
+      <li><b>P99 latency</b> — <code>hit ? 5ms : costLatency</code>; No-Cache/LRU spike to ~2.2 s under BBD while Adaptive holds ~85 ms</li>
+      <li><b>Cost Advisor card</b> — <code>preventableMisses × avgCost &gt; cost of +100MB node</code> → "SCALE_UP, ROI ≈ 80×". Advisory only, no real scaling</li>
+    </ul>
+  </div>
+</section>
+
+<!-- =============================== PANEL 5 =============================== -->
+<section class="panel">
+  <h2><span class="pnum">5</span> Cheat-sheet — endpoint → key → cost model → TTL</h2>
+  <p class="pdesc">Every row maps to a real service function. Sizes/latencies/costs are the PRD's Phase-2 model values (used by the simulator + cost advisor).</p>
+
+  <table>
+    <tr>
+      <th>Endpoint</th><th>Service fn (real repo)</th><th>Cache key</th><th>Type</th>
+      <th>Cost model (lat · $ · size)</th><th>TTL</th><th>Invalidated by</th>
+    </tr>
+    <tr>
+      <td><code>GET /api/products</code></td>
+      <td><code>productService.listProducts</code></td>
+      <td><code>products:list:{category}:{search}:{sort}</code></td>
+      <td><span class="swatch sw cat"></span>CATALOG — <span class="swatch sw sea"></span>SEARCH if <code>search</code>/<code>sort</code></td>
+      <td>5–15 ms plain · 120–300 ms search+sort &nbsp;·&nbsp; $0.00005 / $0.001 &nbsp;·&nbsp; 0.2–1.2 MB</td>
+      <td>5 min</td>
+      <td>any stock change (<code>products:list:*</code>)</td>
+    </tr>
+    <tr>
+      <td><code>GET /api/products/:id</code></td>
+      <td><code>productService.getProduct</code></td>
+      <td><code>product:detail:{id}</code></td>
+      <td><span class="swatch sw det"></span>DETAIL</td>
+      <td>80–150 ms* · $0.0005 · 0.6 MB</td>
+      <td>2 min</td>
+      <td>that product's stock change</td>
+    </tr>
+    <tr>
+      <td><code>GET /api/categories</code></td>
+      <td><code>productService.listCategories</code> (not <code>categoryService</code> — see panel 1 note)</td>
+      <td><code>categories:list</code></td>
+      <td><span class="swatch sw cat"></span>CATALOG</td>
+      <td>5 ms · $0.00002 · 0.05 MB</td>
+      <td>10 min</td>
+      <td>category set changes (rare; stock-0 rule)</td>
+    </tr>
+    <tr>
+      <td><code>GET /api/orders?customerId=</code></td>
+      <td><code>orderService.listOrders</code></td>
+      <td><code>orders:customer:{customerId}</code></td>
+      <td><span class="swatch sw ord"></span>ORDER</td>
+      <td>40–80 ms (fileDb read + sort) · $0.0003 · 0.5 MB</td>
+      <td>30 sec</td>
+      <td>create / cancel / advance for that customer</td>
+    </tr>
+    <tr>
+      <td><code>POST /api/orders</code></td>
+      <td><code>orderService.createOrder</code></td>
+      <td>— (never cached)</td>
+      <td><span class="swatch sw det"></span>CHECKOUT</td>
+      <td>400–800 ms · $0.008 · 1 MB — single-flight guarded</td>
+      <td>n/a</td>
+      <td>it <i>causes</i> the invalidations above</td>
+    </tr>
+  </table>
+
+  <div class="note">
+    <b>Utility at a glance (§1.2 of the PRD)</b> — why the engine evicts the way it does:
+    <span class="k">CATALOG U≈0.12</span> → evicted first (cheap to rebuild, cyan bars leave)
+    · <span class="k">ORDER U≈0.18</span> · <span class="k">SEARCH U≈0.35</span> · <span class="k">DETAIL U≈0.45</span> →
+    kept (purple/amber bars stay) · expensive CHECKOUT-style results U≈0.70 → held longest.
+    LRU has no idea a ₹2 recommendation is costlier to rebuild than a ₹0.001 catalog row — that's the whole pitch.
+    <br />* <span class="small muted">The 80–150 ms "related products" recompute is the PRD's model for Phase 2; today related items are a second client call (panel 1 note).</span>
+  </div>
+</section>
+
+</div>
+</body>
+</html>
