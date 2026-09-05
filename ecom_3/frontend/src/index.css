@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply antialiased;
+  }
+
+  body {
+    @apply bg-[#04060d] font-sans text-slate-200;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 20% -10%, rgba(59, 130, 246, 0.12), transparent),
+      radial-gradient(ellipse 60% 40% at 85% 0%, rgba(139, 92, 246, 0.1), transparent),
+      radial-gradient(ellipse 50% 40% at 50% 110%, rgba(34, 211, 238, 0.06), transparent);
+    background-attachment: fixed;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.2);
+    border-radius: 8px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 163, 184, 0.35);
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply rounded-2xl border border-white/[0.06] bg-white/[0.03] backdrop-blur-md shadow-[0_8px_32px_rgba(0,0,0,0.35)];
+  }
+
+  .glass-card-hover {
+    @apply transition-all duration-300 hover:border-white/[0.12] hover:bg-white/[0.05] hover:shadow-[0_12px_40px_rgba(0,0,0,0.45)];
+  }
+
+  .status-dot {
+    @apply inline-block h-2 w-2 rounded-full;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-white/[0.08] bg-white/[0.04] px-2 py-0.5 text-[11px] font-medium text-slate-300;
+  }
+}
