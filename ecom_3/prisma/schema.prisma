@@ -36,6 +36,8 @@ model Product {
   isActive    Boolean        @default(true)
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @default(now()) @updatedAt
+  p_id        Int?
+  productId   Int            @default(autoincrement())
   category    Category       @relation(fields: [categoryId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   activities  UserActivity[]
 
