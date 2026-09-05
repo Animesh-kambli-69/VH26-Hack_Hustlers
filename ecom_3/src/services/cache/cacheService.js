@@ -13,8 +13,12 @@ async function listKeys() {
 }
 async function getCached(cacheKey) {
   const raw = await redis.get(dataKey(cacheKey));
-  if (raw == null) return null;
+  if (raw == null) {
+    console.log(`[Cache] MISS ${cacheKey}`);
+    return null;
+  }
   let value; try { value = JSON.parse(raw); } catch { value = raw; }
+  console.log(`[Cache] HIT  ${cacheKey}`);
   await redis.hSet(metaKey(cacheKey), { lastAccessAt: new Date().toISOString() });
   await touchMetric(cacheKey, "hit");
   return value;
@@ -52,6 +56,7 @@ async function put(cacheKey, value, costInfo) {
       await remove(lowest.key, `lower score (${lowest.score.toFixed(4)}) than new object (${evaluated.finalScore.toFixed(4)})`);
     }
     await redis.set(dataKey(cacheKey), serialized, { EX: cache.defaultTtl });
+    console.log(`[Cache] SET  ${cacheKey} TTL=${cache.defaultTtl}`);
     await redis.hSet(metaKey(cacheKey), {
       cacheKey, currentScore:String(evaluated.finalScore), objectSizeBytes:String(objectSizeBytes),
       createdAt:new Date().toISOString(), expiresIn:String(cache.defaultTtl)
@@ -68,6 +73,6 @@ async function put(cacheKey, value, costInfo) {
 }
 async function flush() {
   const keys = await redis.keys("cache:*");
-  if (keys.length) await redis.del(keys);
+  if (keys.length) await redis.del(...keys);
 }
 module.exports = { dataKey, metaKey, getCached, put, remove, flush, listKeys, lowestScore };
